@@ -1,0 +1,21 @@
+[package]
+name = "qlafoutea"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.81"
+argmin = { version = "0.10.0", features = ["rayon", "serde"] }
+argmin-math = "0.4.0"
+clap = { version = "4.5.4", features = ["derive"] }
+derive_more = "0.99.17"
+itertools = "0.12.1"
+medians = "3.0.10"
+ndarray = "0.15.6"
+num-traits = "0.2.18"
+rand = "0.8.5"
+serde = { version = "1.0.197", features = ["serde_derive", "derive"] }
+serde_json = "1.0.115"
+thiserror = "1.0.58"
