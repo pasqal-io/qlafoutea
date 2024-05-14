@@ -4,7 +4,10 @@ pub struct C6Coeff {
     value_rad_per_us_times_us_64: f64,
 }
 impl C6Coeff {
+    // Minimal index.
     pub const MIN: u32 = 50;
+
+    // Maximal index.
     pub const MAX: u32 = 100;
 
     /// C_6/hbar (in  rad/µs x µm^6), for Rydberg levels between 50 and 100.
@@ -15,6 +18,12 @@ impl C6Coeff {
     /// _ARC: https://arc-alkali-rydberg-calculator.readthedocs.io/
     /// _PairInteraction: https://www.pairinteraction.org/
     pub fn new(level: u32) -> Option<Self> {
+        if level < Self::MIN {
+            return None;
+        }
+        if level > Self::MAX {
+            return None;
+        }
         let value = match level {
             50 => 96120.72,
             51 => 122241.6,

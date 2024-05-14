@@ -14,16 +14,15 @@ use argmin::{
 };
 use itertools::Itertools;
 use medians::Medianf64;
-use serde::{Deserialize, Serialize};
+use rand::{Rng, SeedableRng};
+use serde::Deserialize;
 
 use crate::{
-    device::Device,
-    register::{CoordinatesUM, Register},
-    types::Quality,
+    device::Device, pulser::register::Register, types::units::Coordinates,
+    types::units::Micrometers, types::Quality,
 };
 
-mod format;
-mod solver;
+pub mod format;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -44,7 +43,7 @@ pub enum Error {
 /// A set of qubo constraints.
 ///
 /// For (de)serialization, please use `format::Format`.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 pub struct Constraints {
     // FIXME: Check that there is no NaN, no infinite, that all values are reasonable.
     /// A symmetric matrix of weights of size `num_nodes`.
@@ -57,13 +56,14 @@ pub struct Constraints {
     data: Vec<f64>,
     num_nodes: usize,
 }
+#[allow(clippy::len_without_is_empty)]
 impl Constraints {
-    /// Initialize for `size` nodes.
-    pub fn with_size(size: usize) -> Self {
-        Self {
-            data: Vec::with_capacity(size * size),
-            num_nodes: size,
+    #[allow(dead_code)]
+    pub fn try_new(num_nodes: usize, data: Vec<f64>) -> Option<Self> {
+        if data.len() != num_nodes * num_nodes {
+            return None;
         }
+        Some(Self { data, num_nodes })
     }
 
     /// Return the number of constraints.
@@ -71,65 +71,80 @@ impl Constraints {
         self.num_nodes * self.num_nodes / 2
     }
 
-    /// Add a constraint between two nodes.
-    ///
-    /// Note that constraints are symmetric - we always renormalize so that x <= y.
-    pub fn add_constraint(&mut self, x: usize, y: usize, value: f64) -> Result<(), Error> {
-        let cell = self.at_mut(x, y)?;
-        *cell = value;
-        Ok(())
-    }
-
-    pub fn layout<Rng: rand::Rng>(
+    pub fn layout(
         &self,
         device: &Device,
-        mut rng: Rng,
+        min_quality: f64,
+        seed: u64,
     ) -> Result<(Register, Quality), Error> {
-        // Set initial search points.
-        //
-        // Our search space has 2 * num_node dimensions (we're looking for 2 coordinates per node).
-        // By definition, Nelder-Mead must take dimensions + 1 starting points.
-        //
-        // Since we wish to be reproducible, we initialize these points from `rng`, which can be
-        // seeded by the caller.
-        let mut params = Vec::with_capacity(self.num_nodes * 2 + 1);
-        for _ in 0..self.num_nodes {
-            let mut state = vec![0f64; self.num_nodes * 2];
-            rng.fill(state.as_mut_slice());
-            params.push(state);
-        }
-        let solver = NelderMead::new(params);
+        for seed in seed..std::u64::MAX {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
-        let cost = Cost {
-            constraints: self,
-            device,
-        };
-
-        let optimized = Executor::new(cost, solver)
-            .configure(|state| state.max_iters(100))
-            .run()
-            .map_err(Error::Layout)?;
-        let coordinates = match optimized.state.best_param {
-            None => return Err(Error::NoSolution),
-            Some(v) => {
-                assert!(v.len() % 2 == 0);
-                let mut iter = v.into_iter();
-                let mut coordinates = Vec::with_capacity(self.num_nodes);
-                while let Some((x, y)) = iter.next_tuple() {
-                    coordinates.push(CoordinatesUM { x, y })
-                }
-                coordinates
+            // Set initial search points.
+            //
+            // Our search space has 2 * num_node dimensions (we're looking for 2 coordinates per node).
+            // By definition, Nelder-Mead must take dimensions + 1 starting points.
+            //
+            // Since we wish to be reproducible, we initialize these points from `rng`, which can be
+            // seeded by the caller.
+            let mut params = Vec::with_capacity(self.num_nodes * 2 + 1);
+            for _ in 0..self.num_nodes {
+                let mut state = vec![0f64; self.num_nodes * 2];
+                rng.fill(state.as_mut_slice());
+                params.push(state);
             }
-        };
-        let register = Register { coordinates };
-        // Normalize distance into a value in [0, 1[
-        let quality = optimized.state.best_cost.atan() / std::f64::consts::FRAC_PI_2;
+            let solver = NelderMead::new(params);
 
-        Ok((register, Quality::new(quality)))
+            let cost = Cost {
+                constraints: self,
+                device,
+            };
+
+            let optimized = Executor::new(cost, solver)
+                .configure(|state| state.max_iters(200000).target_cost(1e-6))
+                .run()
+                .map_err(Error::Layout)?;
+            let quality = 1. - optimized.state.best_cost.atan() / std::f64::consts::FRAC_PI_2;
+            eprintln!(
+                "stopped after {} iterations: {}, best cost {}, quality {:.2}%",
+                optimized.state().iter,
+                optimized.state().termination_status,
+                optimized.state.best_cost,
+                quality * 100.
+            );
+            let coordinates = match optimized.state.best_param {
+                None => return Err(Error::NoSolution),
+                Some(v) => {
+                    assert!(v.len() % 2 == 0);
+                    let mut iter = v.into_iter();
+                    let mut coordinates = Vec::with_capacity(self.num_nodes);
+                    while let Some((x, y)) = iter.next_tuple() {
+                        coordinates.push(Coordinates::<Micrometers>::new(x, y))
+                    }
+                    coordinates
+                }
+            };
+            let register = Register {
+                coordinates: coordinates.into(),
+            };
+
+            if quality >= min_quality {
+                eprintln!("succeeded with seed {seed}");
+                return Ok((register, Quality::new(quality)));
+            } else {
+                eprintln!("quality {} < {}", quality, min_quality);
+            }
+        }
+        unimplemented!()
     }
 
-    pub fn median(&self) -> f64 {
-        self.data.medf_unchecked()
+    pub fn omega(&self) -> f64 {
+        self.data
+            .iter()
+            .cloned()
+            .filter(|f| *f > 0.)
+            .collect_vec()
+            .medf_unchecked()
     }
 }
 
@@ -138,10 +153,7 @@ impl Constraints {
         let index = self.index(x, y)?;
         Ok(self.data[index])
     }
-    fn at_mut(&mut self, x: usize, y: usize) -> Result<&mut f64, Error> {
-        let index = self.index(x, y)?;
-        Ok(&mut self.data[index])
-    }
+
     fn index(&self, x: usize, y: usize) -> Result<usize, Error> {
         let (x, y) = if x >= self.num_nodes || y >= self.num_nodes {
             return Err(Error::IndexOutOfBounds {
@@ -163,7 +175,11 @@ struct Cost<'a> {
     device: &'a Device,
 }
 impl<'a> Cost<'a> {
-    fn actual_interaction(&self, first: CoordinatesUM, second: CoordinatesUM) -> f64 {
+    fn actual_interaction(
+        &self,
+        first: Coordinates<Micrometers>,
+        second: Coordinates<Micrometers>,
+    ) -> f64 {
         self.device
             .interaction_coeff()
             .value_rad_per_us_times_us_64()
@@ -184,20 +200,73 @@ impl<'a> CostFunction for Cost<'a> {
         let mut total = 0.;
 
         for i in 0..self.constraints.num_nodes {
-            let first = CoordinatesUM {
-                x: param[2 * i],
-                y: param[2 * i + 1],
-            };
+            let first = Coordinates::<Micrometers>::new(param[2 * i], param[2 * i + 1]);
             for j in i + 1..self.constraints.num_nodes {
-                let second = CoordinatesUM {
-                    x: param[2 * j],
-                    y: param[2 * j + 1],
-                };
+                let second = Coordinates::<Micrometers>::new(param[2 * j], param[2 * j + 1]);
                 let actual_interaction = self.actual_interaction(first, second);
                 let expected_interaction = self.expected_interaction(i, j);
-                total += (actual_interaction - expected_interaction).powi(2);
+                let diff = (actual_interaction - expected_interaction).powi(2);
+                if i == j {
+                    total += diff
+                } else {
+                    total += 2. * diff
+                }
             }
         }
-        Ok(total.sqrt())
+        let result = total.sqrt();
+        Ok(result)
     }
+}
+
+#[test]
+// Test that the cost is roughly the same to the one we compute in Python.
+fn test_cost_function_vs_python() {
+    let evaluator = Cost {
+        device: &Device::analog(),
+        constraints: &Constraints::try_new(
+            5,
+            vec![
+                -10.0,
+                19.7365809,
+                19.7365809,
+                5.42015853,
+                5.42015853,
+                19.7365809,
+                -10.0,
+                20.67626392,
+                0.17675796,
+                0.85604541,
+                19.7365809,
+                20.67626392,
+                -10.0,
+                0.85604541,
+                0.17675796,
+                5.42015853,
+                0.17675796,
+                0.85604541,
+                -10.0,
+                0.32306662,
+                5.42015853,
+                0.85604541,
+                0.17675796,
+                0.32306662,
+                -10.0,
+            ],
+        )
+        .unwrap(),
+    };
+    let param = vec![
+        0.5488135, 0.71518937, 0.60276338, 0.54488318, 0.4236548, 0.64589411, 0.43758721, 0.891773,
+        0.96366276, 0.38344152,
+    ];
+    let cost = evaluator.cost(&param).unwrap();
+    let python_cost = 149417981060.90808; // Achieved manually from running Python implementation.
+    let diff = f64::abs(cost - python_cost) / f64::max(cost, python_cost);
+    assert!(
+        diff <= 0.01,
+        "Expected < 1% difference between {} and {}, got {}",
+        cost,
+        python_cost,
+        diff
+    );
 }

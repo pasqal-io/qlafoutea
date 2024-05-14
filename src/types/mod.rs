@@ -1,3 +1,5 @@
+pub mod units;
+
 use std::fmt::Display;
 
 /// A quality level in [0, 1]
