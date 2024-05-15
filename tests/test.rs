@@ -1,4 +1,4 @@
-use qlafoutea::{device::Device, qaa};
+use qlafoutea::{device::Device, qaa, qubo, types::Quality};
 
 #[test]
 fn test_main() {
@@ -39,7 +39,14 @@ fn test_main() {
 
     eprintln!("...compiling {} constraints", constraints.len());
     let (register, quality) = constraints
-        .layout(&device, 0.1, 0)
+        .layout(
+            &device,
+            &qubo::Options {
+                min_quality: Quality::new(0.1),
+                seed: 75,
+                max_iters: 1_000,
+            },
+        )
         .expect("Failed to compile qubo");
     eprintln!(
         "...compiled to {} qubits with a quality of {}",

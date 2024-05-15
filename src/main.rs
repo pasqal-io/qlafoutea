@@ -1,7 +1,12 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use qlafoutea::{device::Device, qaa, qubo::format};
+use qlafoutea::{
+    device::Device,
+    qaa,
+    qubo::{self, format},
+    types::Quality,
+};
 
 #[derive(clap::Parser, Debug)]
 struct Args {
@@ -20,6 +25,11 @@ struct Args {
     /// How long we should run the pulse for.
     #[arg(long, default_value_t = 4_000)]
     half_duration_ns: u64,
+
+    /// An upper bound to the number of iterations in each attempt we make to find an optimal
+    /// register.
+    #[arg(long, default_value_t = 4_000)]
+    max_iters: u64,
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -35,7 +45,14 @@ fn main() -> Result<(), anyhow::Error> {
     // Step: compile the qubo to a register.
     eprintln!("...compiling {} constraints", constraints.len());
     let (register, quality) = constraints
-        .layout(&device, args.min_quality, args.seed)
+        .layout(
+            &device,
+            &qubo::Options {
+                seed: args.seed,
+                min_quality: Quality::new(args.min_quality),
+                max_iters: args.max_iters,
+            },
+        )
         .expect("Failed to compile qubo");
     eprintln!(
         "...compiled to {} qubits with a quality of {}",

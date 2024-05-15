@@ -40,6 +40,12 @@ pub enum Error {
     NoSolution,
 }
 
+pub struct Options {
+    pub seed: u64,
+    pub min_quality: Quality,
+    pub max_iters: u64,
+}
+
 /// A set of qubo constraints.
 ///
 /// For (de)serialization, please use `format::Format`.
@@ -71,13 +77,8 @@ impl Constraints {
         self.num_nodes * self.num_nodes / 2
     }
 
-    pub fn layout(
-        &self,
-        device: &Device,
-        min_quality: f64,
-        seed: u64,
-    ) -> Result<(Register, Quality), Error> {
-        for seed in seed..std::u64::MAX {
+    pub fn layout(&self, device: &Device, options: &Options) -> Result<(Register, Quality), Error> {
+        for seed in options.seed..std::u64::MAX - 1 {
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
             // Set initial search points.
@@ -101,7 +102,7 @@ impl Constraints {
             };
 
             let optimized = Executor::new(cost, solver)
-                .configure(|state| state.max_iters(200000).target_cost(1e-6))
+                .configure(|state| state.max_iters(options.max_iters).target_cost(1e-6))
                 .run()
                 .map_err(Error::Layout)?;
             let quality = 1. - optimized.state.best_cost.atan() / std::f64::consts::FRAC_PI_2;
@@ -112,6 +113,7 @@ impl Constraints {
                 optimized.state.best_cost,
                 quality * 100.
             );
+            let quality = Quality::new(quality);
             let coordinates = match optimized.state.best_param {
                 None => return Err(Error::NoSolution),
                 Some(v) => {
@@ -128,11 +130,9 @@ impl Constraints {
                 coordinates: coordinates.into(),
             };
 
-            if quality >= min_quality {
+            if quality >= options.min_quality {
                 eprintln!("succeeded with seed {seed}");
-                return Ok((register, Quality::new(quality)));
-            } else {
-                eprintln!("quality {} < {}", quality, min_quality);
+                return Ok((register, quality));
             }
         }
         unimplemented!()
