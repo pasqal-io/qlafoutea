@@ -1,6 +1,6 @@
 //! Register intermediate language
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 use serde::Serialize;
 
@@ -8,7 +8,7 @@ use crate::types::units::{Coordinates, Micrometers};
 
 #[derive(Clone)]
 pub struct Register {
-    pub coordinates: Rc<[Coordinates<Micrometers>]>,
+    pub coordinates: Arc<[Coordinates<Micrometers>]>,
 }
 
 #[allow(clippy::len_without_is_empty)]

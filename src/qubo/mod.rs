@@ -15,6 +15,7 @@ use argmin::{
 use itertools::Itertools;
 use medians::Medianf64;
 use rand::{Rng, SeedableRng};
+use rayon::prelude::*;
 use serde::Deserialize;
 
 use crate::{
@@ -77,65 +78,61 @@ impl Constraints {
         self.num_nodes * self.num_nodes / 2
     }
 
-    pub fn layout(&self, device: &Device, options: &Options) -> Result<(Register, Quality), Error> {
-        for seed in options.seed..std::u64::MAX - 1 {
-            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    pub fn layout(&self, device: &Device, options: &Options) -> Option<(Register, Quality)> {
+        (options.seed..std::u64::MAX)
+            .into_par_iter()
+            .find_map_any(|seed| {
+                let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
-            // Set initial search points.
-            //
-            // Our search space has 2 * num_node dimensions (we're looking for 2 coordinates per node).
-            // By definition, Nelder-Mead must take dimensions + 1 starting points.
-            //
-            // Since we wish to be reproducible, we initialize these points from `rng`, which can be
-            // seeded by the caller.
-            let mut params = Vec::with_capacity(self.num_nodes * 2 + 1);
-            for _ in 0..self.num_nodes {
-                let mut state = vec![0f64; self.num_nodes * 2];
-                rng.fill(state.as_mut_slice());
-                params.push(state);
-            }
-            let solver = NelderMead::new(params);
-
-            let cost = Cost {
-                constraints: self,
-                device,
-            };
-
-            let optimized = Executor::new(cost, solver)
-                .configure(|state| state.max_iters(options.max_iters).target_cost(1e-6))
-                .run()
-                .map_err(Error::Layout)?;
-            let quality = 1. - optimized.state.best_cost.atan() / std::f64::consts::FRAC_PI_2;
-            eprintln!(
-                "stopped after {} iterations: {}, best cost {}, quality {:.2}%",
-                optimized.state().iter,
-                optimized.state().termination_status,
-                optimized.state.best_cost,
-                quality * 100.
-            );
-            let quality = Quality::new(quality);
-            let coordinates = match optimized.state.best_param {
-                None => return Err(Error::NoSolution),
-                Some(v) => {
-                    assert!(v.len() % 2 == 0);
-                    let mut iter = v.into_iter();
-                    let mut coordinates = Vec::with_capacity(self.num_nodes);
-                    while let Some((x, y)) = iter.next_tuple() {
-                        coordinates.push(Coordinates::<Micrometers>::new(x, y))
-                    }
-                    coordinates
+                // Set initial search points.
+                //
+                // Our search space has 2 * num_node dimensions (we're looking for 2 coordinates per node).
+                // By definition, Nelder-Mead must take dimensions + 1 starting points.
+                //
+                // Since we wish to be reproducible, we initialize these points from `rng`, which can be
+                // seeded by the caller.
+                let mut params = Vec::with_capacity(self.num_nodes * 2 + 1);
+                for _ in 0..self.num_nodes {
+                    let mut state = vec![0f64; self.num_nodes * 2];
+                    rng.fill(state.as_mut_slice());
+                    params.push(state);
                 }
-            };
-            let register = Register {
-                coordinates: coordinates.into(),
-            };
+                let solver = NelderMead::new(params);
 
-            if quality >= options.min_quality {
-                eprintln!("succeeded with seed {seed}");
-                return Ok((register, quality));
-            }
-        }
-        unimplemented!()
+                let cost = Cost {
+                    constraints: self,
+                    device,
+                };
+
+                let optimized = Executor::new(cost, solver)
+                    .configure(|state| state.max_iters(options.max_iters).target_cost(1e-6))
+                    .run()
+                    .expect("Error in the execution of register optimizer");
+                let quality = 1. - optimized.state.best_cost.atan() / std::f64::consts::FRAC_PI_2;
+                let quality = Quality::new(quality);
+                let coordinates = match optimized.state.best_param {
+                    None => return None,
+                    Some(v) => {
+                        assert!(v.len() % 2 == 0);
+                        let mut iter = v.into_iter();
+                        let mut coordinates = Vec::with_capacity(self.num_nodes);
+                        while let Some((x, y)) = iter.next_tuple() {
+                            coordinates.push(Coordinates::<Micrometers>::new(x, y))
+                        }
+                        coordinates
+                    }
+                };
+                let register = Register {
+                    coordinates: coordinates.into(),
+                };
+
+                if quality >= options.min_quality {
+                    eprintln!("succeeded with seed {seed}");
+                    Some((register, quality))
+                } else {
+                    None
+                }
+            })
     }
 
     pub fn omega(&self) -> f64 {

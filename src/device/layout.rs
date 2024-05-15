@@ -1,10 +1,10 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use serde::Serialize;
 
 #[derive(Clone)]
 pub struct Layout {
-    pub coordinates: Rc<[[f64; 2]]>,
+    pub coordinates: Arc<[[f64; 2]]>,
 }
 
 impl Serialize for Layout {
@@ -22,6 +22,6 @@ impl Serialize for Layout {
 
 #[derive(Serialize)]
 struct Schema {
-    coordinates: Rc<[[f64; 2]]>,
+    coordinates: Arc<[[f64; 2]]>,
     slug: &'static str,
 }
