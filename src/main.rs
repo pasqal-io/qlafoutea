@@ -1,14 +1,7 @@
-use std::{path::PathBuf, rc::Rc};
+use std::path::PathBuf;
 
 use clap::Parser;
-use device::Device;
-
-use crate::pulser::{pulse::Pulse, sequence::Sequence, waveform::Waveform};
-
-mod device;
-mod pulser;
-mod qubo;
-mod types;
+use qlafoutea::{device::Device, qaa, qubo::format};
 
 #[derive(clap::Parser, Debug)]
 struct Args {
@@ -35,7 +28,7 @@ fn main() -> Result<(), anyhow::Error> {
     let path_source = args.source.as_path();
 
     let qubo_source = std::fs::File::open(path_source).expect("Failed to open source file");
-    let qubo_parsed = serde_yaml::from_reader::<_, qubo::format::Format>(qubo_source)
+    let qubo_parsed = serde_yaml::from_reader::<_, format::Format>(qubo_source)
         .expect("Failed to parse source file");
     let constraints = qubo_parsed.as_constraints();
 
@@ -50,18 +43,14 @@ fn main() -> Result<(), anyhow::Error> {
         quality
     );
 
-    // Step: integrate QAOA.
-    let omega = constraints.omega();
-    let delta_0 = -5.0; // Any negative number will do.
-    let delta_f = -delta_0; // Any positive number will do.
-    let amplitude = Waveform::interpolated(args.half_duration_ns as f64, &[0., omega, 0.]);
-    let detuning = Waveform::interpolated(args.half_duration_ns as f64, &[delta_0, 0f64, delta_f]);
-    let channel: Rc<str> = "ising".into();
-    let sequence = Sequence::new(
+    // Step: integrate QAA.
+    let sequence = qaa::compile(
+        constraints,
         device,
         register,
-        Pulse::new(channel.clone(), amplitude, detuning),
-        &[channel],
+        &qaa::Options {
+            half_duration_ns: args.half_duration_ns as f64,
+        },
     );
 
     // Write pulser output.
