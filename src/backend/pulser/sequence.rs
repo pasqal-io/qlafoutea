@@ -2,7 +2,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use serde::Serialize;
 
-use crate::{
+use crate::backend::{
     device::Device,
     pulser::{device::ChannelId, pulse::Pulse, register::Register},
 };

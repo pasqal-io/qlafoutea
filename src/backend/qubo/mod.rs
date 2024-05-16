@@ -19,8 +19,11 @@ use rayon::prelude::*;
 use serde::Deserialize;
 
 use crate::{
-    device::Device, pulser::register::Register, types::units::Coordinates,
-    types::units::Micrometers, types::Quality,
+    backend::{device::Device, pulser::register::Register},
+    types::{
+        units::{Coordinates, Micrometers},
+        Quality,
+    },
 };
 
 pub mod format;
@@ -78,7 +81,7 @@ impl Constraints {
         self.num_nodes * self.num_nodes / 2
     }
 
-    pub fn layout(&self, device: &Device, options: &Options) -> Option<(Register, Quality)> {
+    pub fn layout(&self, device: &Device, options: &Options) -> Option<(Register, Quality, u64)> {
         (options.seed..std::u64::MAX)
             .into_par_iter()
             .find_map_any(|seed| {
@@ -127,8 +130,7 @@ impl Constraints {
                 };
 
                 if quality >= options.min_quality {
-                    eprintln!("succeeded with seed {seed}");
-                    Some((register, quality))
+                    Some((register, quality, seed))
                 } else {
                     None
                 }

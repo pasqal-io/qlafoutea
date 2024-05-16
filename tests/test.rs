@@ -1,9 +1,16 @@
-use qlafoutea::{device::Device, qaa, qubo, types::Quality};
+use qlafoutea::{
+    backend::{
+        device::Device,
+        qaa,
+        qubo::{self, Constraints},
+    },
+    types::Quality,
+};
 
 #[test]
 fn test_main() {
     let half_duration_ns = 4_000;
-    let constraints = qlafoutea::qubo::Constraints::try_new(
+    let constraints = Constraints::try_new(
         5,
         vec![
             -10.0,
@@ -38,7 +45,7 @@ fn test_main() {
     let device = Device::analog();
 
     eprintln!("...compiling {} constraints", constraints.len());
-    let (register, quality) = constraints
+    let (register, quality, _) = constraints
         .layout(
             &device,
             &qubo::Options {
@@ -54,7 +61,7 @@ fn test_main() {
         quality
     );
 
-    // Step: integrate QAOA.
+    // Step: integrate QAA.
     let sequence = qaa::compile(
         &constraints,
         device,

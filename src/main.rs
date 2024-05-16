@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use qlafoutea::{
-    device::Device,
-    qaa,
-    qubo::{self, format},
+    backend::device::Device,
+    backend::qaa,
+    backend::qubo::{self, format},
     types::Quality,
 };
 
@@ -44,7 +44,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     // Step: compile the qubo to a register.
     eprintln!("...compiling {} constraints", constraints.len());
-    let (register, quality) = constraints
+    let (register, quality, seed) = constraints
         .layout(
             &device,
             &qubo::Options {
@@ -55,9 +55,10 @@ fn main() -> Result<(), anyhow::Error> {
         )
         .expect("Failed to compile qubo");
     eprintln!(
-        "...compiled to {} qubits with a quality of {}",
+        "...compiled to {} qubits with a quality of {} (using seed {})",
         register.len(),
-        quality
+        quality,
+        seed
     );
 
     // Step: integrate QAA.

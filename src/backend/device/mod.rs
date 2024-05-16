@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use layout::Layout;
 
-use crate::pulser::device::{ChannelId, PhysicalChannel, RydbergBeam, RydbergEom};
+use crate::backend::pulser::device::{ChannelId, PhysicalChannel, RydbergBeam, RydbergEom};
 
 pub struct Device {
     interaction_coeff: c6::C6Coeff,
