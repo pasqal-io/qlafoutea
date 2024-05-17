@@ -28,6 +28,13 @@ To build & run (and display the command-line options):
 $ cargo run -- --help
 ```
 
+To run tests:
+
+```sh
+$ python3.10 -m venv venv # You only need to do this the first time.
+$ . venv/bin/activate
+$ cargo test
+```
 
 
 ## What it does

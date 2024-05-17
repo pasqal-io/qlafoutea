@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use qlafoutea::{
     backend::{
         device::Device,
@@ -84,7 +86,20 @@ fn test_qubo_compile() {
 fn test_qubo_compile_and_run() {
     let json = qubo_compile();
     qlafoutea::runtime::setup().unwrap();
-    let result = run_source(json).unwrap();
-    assert_eq!(result[0].bitstring.as_str(), "00111");
-    assert_eq!(result[1].bitstring.as_str(), "01011");
+    let samples = run_source(json).unwrap();
+
+    eprintln!("checking samples {:?}", samples);
+
+    // Compare the best two samples against the known-to-be-best-two
+    // samples, as per https://pulser.readthedocs.io/en/stable/tutorials/qubo.html#Quantum-Adiabatic-Algorithm.
+    //
+    // Note that the order is a bit unstable, so the best two could be
+    // swapped.
+    let best_two: HashSet<_> = samples
+        .iter()
+        .take(2)
+        .map(|sample| sample.bitstring.as_str())
+        .collect();
+    let expected_best_two: HashSet<_> = ["00111", "01011"].into_iter().collect();
+    assert_eq!(best_two, expected_best_two);
 }
