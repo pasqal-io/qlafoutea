@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use serde::Serialize;
 
-use crate::pulser::waveform::Waveform;
+use crate::backend::pulser::waveform::Waveform;
 
 pub struct Pulse {
     channel: Rc<str>,

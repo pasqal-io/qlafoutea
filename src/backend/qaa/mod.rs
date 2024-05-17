@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::{
+use crate::backend::{
     device::Device,
     pulser::{pulse::Pulse, register::Register, sequence::Sequence, waveform::Waveform},
     qubo::Constraints,

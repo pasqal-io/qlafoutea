@@ -1,5 +1,4 @@
-pub mod device;
-pub mod pulser;
-pub mod qaa;
-pub mod qubo;
+pub mod backend;
+pub mod path;
+pub mod runtime;
 pub mod types;
