@@ -81,60 +81,67 @@ impl Constraints {
         self.num_nodes * self.num_nodes / 2
     }
 
+    /// Attempt to layout a set of constraints as a Register.
+    ///
+    /// In the current implementation, we run N concurrent instances of a Nelder-Mead optimizer,
+    /// with distinct start states, where N is determined from the number of cores on the computer.
+    ///
+    /// In case of success, returns:
+    /// - Register: the geometry;
+    /// - Quality: an abstract measure of quality, where 0 is really bad and 1 is optimal;
+    /// - seed: the seed with which we found a solution.
     pub fn layout(&self, device: &Device, options: &Options) -> Option<(Register, Quality, u64)> {
-        (options.seed..std::u64::MAX)
-            .into_par_iter()
-            .find_map_any(|seed| {
-                let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        (0..std::u64::MAX).into_par_iter().find_map_any(|seed| {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed.wrapping_add(seed));
 
-                // Set initial search points.
-                //
-                // Our search space has 2 * num_node dimensions (we're looking for 2 coordinates per node).
-                // By definition, Nelder-Mead must take dimensions + 1 starting points.
-                //
-                // Since we wish to be reproducible, we initialize these points from `rng`, which can be
-                // seeded by the caller.
-                let mut params = Vec::with_capacity(self.num_nodes * 2 + 1);
-                for _ in 0..self.num_nodes {
-                    let mut state = vec![0f64; self.num_nodes * 2];
-                    rng.fill(state.as_mut_slice());
-                    params.push(state);
-                }
-                let solver = NelderMead::new(params);
+            // Set initial search points.
+            //
+            // Our search space has 2 * num_node dimensions (we're looking for 2 coordinates per node).
+            // By definition, Nelder-Mead must take dimensions + 1 starting points.
+            //
+            // Since we wish to be reproducible, we initialize these points from `rng`, which can be
+            // seeded by the caller.
+            let mut params = Vec::with_capacity(self.num_nodes * 2 + 1);
+            for _ in 0..self.num_nodes {
+                let mut state = vec![0f64; self.num_nodes * 2];
+                rng.fill(state.as_mut_slice());
+                params.push(state);
+            }
+            let solver = NelderMead::new(params);
 
-                let cost = Cost {
-                    constraints: self,
-                    device,
-                };
+            let cost = Cost {
+                constraints: self,
+                device,
+            };
 
-                let optimized = Executor::new(cost, solver)
-                    .configure(|state| state.max_iters(options.max_iters).target_cost(1e-6))
-                    .run()
-                    .expect("Error in the execution of register optimizer");
-                let quality = 1. - optimized.state.best_cost.atan() / std::f64::consts::FRAC_PI_2;
-                let quality = Quality::new(quality);
-                let coordinates = match optimized.state.best_param {
-                    None => return None,
-                    Some(v) => {
-                        assert!(v.len() % 2 == 0);
-                        let mut iter = v.into_iter();
-                        let mut coordinates = Vec::with_capacity(self.num_nodes);
-                        while let Some((x, y)) = iter.next_tuple() {
-                            coordinates.push(Coordinates::<Micrometers>::new(x, y))
-                        }
-                        coordinates
+            let optimized = Executor::new(cost, solver)
+                .configure(|state| state.max_iters(options.max_iters).target_cost(1e-6))
+                .run()
+                .expect("Error in the execution of register optimizer");
+            let quality = 1. - optimized.state.best_cost.atan() / std::f64::consts::FRAC_PI_2;
+            let quality = Quality::new(quality);
+            let coordinates = match optimized.state.best_param {
+                None => return None,
+                Some(v) => {
+                    assert!(v.len() % 2 == 0);
+                    let mut iter = v.into_iter();
+                    let mut coordinates = Vec::with_capacity(self.num_nodes);
+                    while let Some((x, y)) = iter.next_tuple() {
+                        coordinates.push(Coordinates::<Micrometers>::new(x, y))
                     }
-                };
-                let register = Register {
-                    coordinates: coordinates.into(),
-                };
-
-                if quality >= options.min_quality {
-                    Some((register, quality, seed))
-                } else {
-                    None
+                    coordinates
                 }
-            })
+            };
+            let register = Register {
+                coordinates: coordinates.into(),
+            };
+
+            if quality >= options.min_quality {
+                Some((register, quality, seed))
+            } else {
+                None
+            }
+        })
     }
 
     pub fn omega(&self) -> f64 {
