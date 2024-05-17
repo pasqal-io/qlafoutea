@@ -2,16 +2,22 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use qlafoutea::{
-    backend::device::Device,
-    backend::qaa,
-    backend::qubo::{self, format},
+    backend::{
+        device::Device,
+        qaa,
+        qubo::{self, format},
+    },
+    path::PathExt,
+    runtime,
     types::Quality,
 };
 
+/// Build from QUBO intermediate language.
+///
+/// Once we have front-end capabilities, this command will serve mainly for debugging.
 #[derive(clap::Parser, Debug)]
-struct Args {
+struct Backend {
     /// The file to compile.
-    #[arg(long)]
     source: PathBuf,
 
     /// A seed to use for random number generation.
@@ -32,8 +38,24 @@ struct Args {
     max_iters: u64,
 }
 
-fn main() -> Result<(), anyhow::Error> {
-    let args = Args::parse();
+#[derive(clap::Parser, Debug)]
+struct Run {
+    /// The file to run.
+    ///
+    /// It must have been compiled already.
+    source: PathBuf,
+}
+
+#[derive(Debug, Parser)]
+enum Command {
+    /// Build from QUBO intermediate language.
+    Backend(Backend),
+
+    /// Launch a previously built program.
+    Run(Run),
+}
+
+fn backend(args: Backend) -> Result<(), anyhow::Error> {
     let device = Device::analog();
     let path_source = args.source.as_path();
 
@@ -73,14 +95,35 @@ fn main() -> Result<(), anyhow::Error> {
 
     // Write pulser output.
     // In the future, we'll probably write more data in the file.
-    let mut path_dest = PathBuf::new();
-    path_dest.set_file_name(path_source.file_name().unwrap());
-    path_dest = match path_source.extension() {
-        None => path_dest.with_extension("pulser.json"),
-        Some(ext) => path_dest.with_extension(format!("{}.pulser.json", ext.to_string_lossy())),
-    };
+    let path_dest = path_source.here_with_ext("pulser.json");
     eprintln!("...generating {}", path_dest.display());
     let out_dest = std::fs::File::create(path_dest)?;
     serde_json::to_writer_pretty(out_dest, &sequence)?;
     Ok(())
+}
+
+fn run(args: Run) -> Result<(), anyhow::Error> {
+    let path_dest = args.source.here_with_ext("samples.csv");
+
+    eprintln!("...setting up emulator");
+    runtime::setup()?;
+    eprintln!("...starting emulation");
+    let result = runtime::run::run(runtime::run::Options {
+        sequence_path: args.source,
+    })?;
+
+    eprintln!("...storing samples in {}", path_dest.display());
+    let mut writer = csv::Writer::from_path(path_dest)?;
+    for record in result {
+        writer.serialize(record)?;
+    }
+    Ok(())
+}
+
+fn main() -> Result<(), anyhow::Error> {
+    let args = Command::parse();
+    match args {
+        Command::Backend(args) => backend(args),
+        Command::Run(args) => run(args),
+    }
 }

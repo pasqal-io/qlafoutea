@@ -4,11 +4,11 @@ use qlafoutea::{
         qaa,
         qubo::{self, Constraints},
     },
+    runtime::run::run_source,
     types::Quality,
 };
 
-#[test]
-fn test_main() {
+fn qubo_compile() -> String {
     let half_duration_ns = 4_000;
     let constraints = Constraints::try_new(
         5,
@@ -71,6 +71,20 @@ fn test_main() {
         },
     );
 
-    let json = serde_json::to_string_pretty(&sequence).unwrap();
+    serde_json::to_string_pretty(&sequence).unwrap()
+}
+
+#[test]
+fn test_qubo_compile() {
+    let json = qubo_compile();
     println!("{json}");
+}
+
+#[test]
+fn test_qubo_compile_and_run() {
+    let json = qubo_compile();
+    qlafoutea::runtime::setup().unwrap();
+    let result = run_source(json).unwrap();
+    assert_eq!(result[0].bitstring.as_str(), "00111");
+    assert_eq!(result[1].bitstring.as_str(), "01011");
 }
