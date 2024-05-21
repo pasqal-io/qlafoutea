@@ -8,6 +8,8 @@
 //!
 //! sum_{i, j}(Q[i, j] * x [i] * x[j])
 
+use std::fmt::Display;
+
 use argmin::{
     core::{CostFunction, Executor},
     solver::neldermead::NelderMead,
@@ -16,7 +18,7 @@ use itertools::Itertools;
 use medians::Medianf64;
 use rand::{Rng, SeedableRng};
 use rayon::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serializer};
 
 use crate::{
     backend::{device::Device, pulser::register::Register},
@@ -53,7 +55,7 @@ pub struct Options {
 /// A set of qubo constraints.
 ///
 /// For (de)serialization, please use `format::Format`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 pub struct Constraints {
     // FIXME: Check that there is no NaN, no infinite, that all values are reasonable.
     /// A symmetric matrix of weights of size `num_nodes`.
@@ -68,6 +70,16 @@ pub struct Constraints {
 }
 #[allow(clippy::len_without_is_empty)]
 impl Constraints {
+    pub fn new(num_nodes: usize) -> Self {
+        let data = vec![0.; num_nodes * num_nodes];
+        Self { data, num_nodes }
+    }
+
+    pub fn from_const<const N: usize>(data: [[f64; N]; N]) -> Self {
+        let data = data.iter().flat_map(|d| d.iter()).cloned().collect();
+        Self { data, num_nodes: N }
+    }
+
     #[allow(dead_code)]
     pub fn try_new(num_nodes: usize, data: Vec<f64>) -> Option<Self> {
         if data.len() != num_nodes * num_nodes {
@@ -77,8 +89,13 @@ impl Constraints {
     }
 
     /// Return the number of constraints.
-    pub fn len(&self) -> usize {
+    pub fn num_constraints(&self) -> usize {
         self.num_nodes * self.num_nodes / 2
+    }
+
+    /// Return the number of nodes.
+    pub fn num_nodes(&self) -> usize {
+        self.num_nodes
     }
 
     /// Attempt to layout a set of constraints as a Register.
@@ -160,6 +177,17 @@ impl Constraints {
         Ok(self.data[index])
     }
 
+    pub fn get_mut(&mut self, x: usize, y: usize) -> Result<&mut f64, Error> {
+        let index = self.index(x, y)?;
+        Ok(&mut self.data[index])
+    }
+
+    pub fn delta_at(&mut self, x: usize, y: usize, delta: f64) -> Result<(), Error> {
+        let ref_mut = self.get_mut(x, y)?;
+        *ref_mut += delta;
+        Ok(())
+    }
+
     fn index(&self, x: usize, y: usize) -> Result<usize, Error> {
         let (x, y) = if x >= self.num_nodes || y >= self.num_nodes {
             return Err(Error::IndexOutOfBounds {
@@ -173,6 +201,42 @@ impl Constraints {
             (y, x)
         };
         Ok(self.num_nodes * y + x)
+    }
+}
+impl Display for Constraints {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut buf = String::new();
+        for y in 0..self.num_nodes {
+            let mut line = if y == 0 {
+                "[".to_string()
+            } else {
+                " [".to_string()
+            };
+            for x in 0..self.num_nodes {
+                if x == 0 {
+                    line.push_str(&format!("{}", self.at(x, y).unwrap()));
+                } else {
+                    line.push_str(&format!(", {}", self.at(x, y).unwrap()));
+                }
+            }
+            buf.push_str(&format!(
+                "{}]{}",
+                line,
+                if y + 1 == self.num_nodes { "]" } else { ",\n" }
+            ));
+        }
+        f.collect_str(&buf)
+        /*
+                let mut seq = f.serialize_seq(Some(self.num_nodes))?;
+                for x in 0..self.num_nodes {
+                    let iterator = (0..self.num_nodes)
+                        .into_iter()
+                        .map(|y| self.at(x, y).unwrap());
+                    seq.
+                    seq.serialize_element(&iterator)?;
+                }
+                Ok(())
+        */
     }
 }
 

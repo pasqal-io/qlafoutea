@@ -46,7 +46,6 @@ fn qubo_compile() -> String {
 
     let device = Device::analog();
 
-    eprintln!("...compiling {} constraints", constraints.len());
     let (register, quality, _) = constraints
         .layout(
             &device,

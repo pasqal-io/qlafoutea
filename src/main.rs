@@ -65,7 +65,7 @@ fn backend(args: Backend) -> Result<(), anyhow::Error> {
     let constraints = qubo_parsed.as_constraints();
 
     // Step: compile the qubo to a register.
-    eprintln!("...compiling {} constraints", constraints.len());
+    eprintln!("...compiling {} constraints", constraints.num_constraints());
     let (register, quality, seed) = constraints
         .layout(
             &device,
