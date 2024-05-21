@@ -53,6 +53,8 @@ fn qubo_compile() -> String {
                 min_quality: Quality::new(0.1),
                 seed: 75,
                 max_iters: 1_000,
+                overflow_protection_factor: 0.95,
+                overflow_protection_threshold: 1_000.,
             },
         )
         .expect("Failed to compile qubo");
@@ -85,7 +87,7 @@ fn test_qubo_compile() {
 fn test_qubo_compile_and_run() {
     let json = qubo_compile();
     qlafoutea::runtime::setup().unwrap();
-    let samples = run_source(json).unwrap();
+    let samples = run_source(&json).unwrap();
 
     eprintln!("checking samples {:?}", samples);
 

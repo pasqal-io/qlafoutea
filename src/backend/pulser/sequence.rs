@@ -24,7 +24,37 @@ impl Sequence {
         }
     }
 }
-
+/*
+impl<'de> Deserialize<'de> for Sequence {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let schema = Schema::deserialize(deserializer)?;
+        match schema.operations.len() {
+            0 => {
+                return Err(serde::de::Error::invalid_value(
+                    serde::de::Unexpected::Other("empty operations"),
+                    &"exactly one operation",
+                ))
+            }
+            n if n > 1 => {
+                return Err(serde::de::Error::invalid_value(
+                    serde::de::Unexpected::Other(&format!("{} operations", n)),
+                    &"exactly one operation",
+                ))
+            }
+            _ => {}
+        }
+        Ok(Self {
+            register: schema.register,
+            device: schema.device,
+            pulse: schema.operations[0].clone(),
+            channels: schema.channels.into_iter().map(|(k, _)| k.into()).collect(),
+        })
+    }
+}
+*/
 impl Serialize for Sequence {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

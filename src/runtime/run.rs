@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
 use anyhow::Context;
 use itertools::Itertools;
@@ -8,13 +8,12 @@ use pyo3::{
 };
 use serde::{Deserialize, Serialize};
 
-pub struct Options {
-    pub sequence_path: PathBuf,
-}
+use crate::backend::format::Code;
 
-pub fn run(options: Options) -> Result<Vec<Sample>, anyhow::Error> {
-    let source = std::fs::read_to_string(options.sequence_path).context("Failed to read input")?;
-    run_source(source)
+pub fn run(code: Code) -> Result<(), anyhow::Error> {
+    let samples = run_source(&code.sequence)?;
+    code.problem.handle_results(&samples)?;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -23,7 +22,7 @@ pub struct Sample {
     pub instances: u64,
 }
 
-pub fn run_source(source: String) -> Result<Vec<Sample>, anyhow::Error> {
+pub fn run_source(source: &str) -> Result<Vec<Sample>, anyhow::Error> {
     pyo3::prepare_freethreaded_python();
     let samples = Python::with_gil(|py| -> Result<HashMap<String, u64>, pyo3::PyErr> {
         let sequence_builder = py.import_bound("pulser")?.getattr("Sequence")?;
@@ -52,5 +51,7 @@ pub fn run_source(source: String) -> Result<Vec<Sample>, anyhow::Error> {
             instances,
         })
         .collect_vec();
+
+    eprintln!("simulation complete");
     Ok(sorted)
 }

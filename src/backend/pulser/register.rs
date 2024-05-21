@@ -30,8 +30,8 @@ impl Serialize for Register {
                 .enumerate()
                 .map(|(index, c)| AtomSchema {
                     name: format!("{index}"),
-                    x: c.x,
-                    y: c.y,
+                    x: c.x.into_inner(),
+                    y: c.y.into_inner(),
                 })
                 .collect(),
         );

@@ -1,9 +1,9 @@
-use std::{collections::HashMap, fmt::Display, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, fmt::Display, sync::Arc};
 
 use itertools::Itertools;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::backend::qubo::Constraints;
+use crate::{backend::qubo::Constraints, runtime::run::Sample};
 
 pub type Input = Disjunction;
 
@@ -12,7 +12,7 @@ pub type Input = Disjunction;
 /// The solution space is the mapping between the variables used in the problem
 /// and booleans. A solution to the problem is valid iff the disjunction evaluates
 /// to `true`.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Disjunction {
     /// A logical "and" operation between a number of conjunctions.
     ///
@@ -21,7 +21,7 @@ pub struct Disjunction {
 }
 
 /// A logical conjunction, e.g. a OR of variables/negated variables.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Conjunction {
     /// A logical "or" operation between a number of literals.
     ///
@@ -35,7 +35,6 @@ impl Conjunction {
 }
 
 /// Either a variable or a negated variable.
-#[derive(Deserialize)]
 pub struct Literal {
     /// The name of the variable.
     pub variable: Variable,
@@ -55,9 +54,38 @@ impl Display for Literal {
         }
     }
 }
+impl<'de> Deserialize<'de> for Literal {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        const NOT: &str = "NOT ";
+        let text = String::deserialize(deserializer)?;
+        let (positive, name) = match text.strip_prefix(NOT) {
+            None => (true, Cow::from(text)),
+            Some(suffix) => (false, Cow::from(suffix)),
+        };
+        Ok(Literal {
+            positive,
+            variable: Variable(name.trim().into()),
+        })
+    }
+}
+impl Serialize for Literal {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if self.positive {
+            self.variable.0.serialize(serializer)
+        } else {
+            format!("NOT {}", self.variable.0).serialize(serializer)
+        }
+    }
+}
 
 /// The name of a variable.
-#[derive(Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord, Clone)]
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone)]
 pub struct Variable(Arc<str>);
 impl Variable {
     pub fn positive(&self) -> Literal {
@@ -80,12 +108,14 @@ impl Input {
         self.and.iter().flat_map(|c| c.variables()).dedup()
     }
 
+    pub fn ordered_variables(&self) -> impl Iterator<Item = &Variable> {
+        self.variables().sorted().dedup()
+    }
+
     pub fn to_qubo(&self) -> Constraints {
         // Collect variables and assign to each an index.
         let variables: HashMap<&Variable, usize> = self
-            .variables()
-            .sorted()
-            .dedup()
+            .ordered_variables()
             .enumerate()
             .map(|(i, v)| (v, i))
             .collect();
@@ -209,5 +239,33 @@ fn test_to_qubo() {
                 j
             );
         }
+    }
+}
+
+impl Input {
+    pub fn handle_results(&self, results: &[Sample]) -> Result<(), anyhow::Error> {
+        assert!(!results.is_empty());
+        let best = results[0].instances;
+        let variables = self.ordered_variables().collect_vec();
+        for result in results
+            .iter()
+            .take_while(|result| result.instances >= best / 2)
+        {
+            eprintln!("Instances {}", result.instances);
+            let mut writer = csv::Writer::from_writer(std::io::stdout());
+            for (c, var) in result.bitstring.chars().zip(variables.iter()) {
+                #[derive(Serialize)]
+                struct Record<'a> {
+                    variable: &'a str,
+                    value: char,
+                }
+                let record = Record {
+                    variable: var.0.as_ref(),
+                    value: c,
+                };
+                writer.serialize(record)?;
+            }
+        }
+        Ok(())
     }
 }

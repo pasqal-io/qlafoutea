@@ -2,6 +2,7 @@
 
 pub mod c6;
 pub mod layout;
+
 use serde::Serialize;
 
 use layout::Layout;
@@ -13,7 +14,10 @@ pub struct Device {
     dimensions: u32,
     rydberg_level: u32,
     max_atom_num: u32,
-    max_radial_distance: u32,
+
+    /// Max distance to the center of the board, in um.
+    max_radial_distance_um: u32,
+    max_sq_distance_to_center_um_sq: f64,
     min_atom_distance: f64,
     max_sequence_duration: u32,
     is_virtual: bool,
@@ -25,6 +29,9 @@ pub struct Device {
 impl Device {
     pub fn interaction_coeff(&self) -> c6::C6Coeff {
         self.interaction_coeff
+    }
+    pub fn max_sq_distance_to_center(&self) -> f64 {
+        self.max_sq_distance_to_center_um_sq
     }
 }
 
@@ -38,7 +45,7 @@ impl Serialize for Device {
             dimensions: self.dimensions,
             max_atom_num: self.max_atom_num,
             rydberg_level: self.rydberg_level,
-            max_radial_distance: self.max_radial_distance,
+            max_radial_distance: self.max_radial_distance_um,
             min_atom_distance: self.min_atom_distance,
             max_sequence_duration: self.max_sequence_duration,
             is_virtual: self.is_virtual,
@@ -170,14 +177,17 @@ impl Device {
             min_retarget_interval: (),
         }];
 
+        let max_radial_distance_um = 35;
+        let max_sq_distance_to_center_um_sq = (max_radial_distance_um as f64).powi(2);
         Self {
             interaction_coeff,
             dimensions: 2,
             rydberg_level,
             max_atom_num: 25,
-            max_radial_distance: 35,
+            max_radial_distance_um,
             min_atom_distance: 5.,
             max_sequence_duration: 4_000,
+            max_sq_distance_to_center_um_sq,
             is_virtual: false,
             max_layout_filling: 0.5,
             name: "AnalogDevice",

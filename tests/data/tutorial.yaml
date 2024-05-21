@@ -1,5 +1,5 @@
 # Data from https://pulser.readthedocs.io/en/stable/tutorials/qubo.html#Quantum-Adiabatic-Algorithm
-version: 0.1.0
+type: qubo
 data:
   - -10.0
   - 19.7365809
