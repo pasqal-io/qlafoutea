@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, fmt::Display, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, fmt::Display, ops::Not, sync::Arc};
 
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,11 @@ pub struct Disjunction {
     /// It evaluates to `true` for a solution iff all the conjunctions evaluate to `true`.
     pub and: Vec<Conjunction>,
 }
+impl Disjunction {
+    pub fn eval(&self, env: &Env) -> bool {
+        self.and.iter().all(|literal| literal.eval(env))
+    }
+}
 
 /// A logical conjunction, e.g. a OR of variables/negated variables.
 #[derive(Deserialize, Serialize)]
@@ -31,6 +36,9 @@ pub struct Conjunction {
 impl Conjunction {
     pub fn variables(&self) -> impl Iterator<Item = &Variable> {
         self.or.iter().map(|literal| &literal.variable)
+    }
+    pub fn eval(&self, env: &Env) -> bool {
+        self.or.iter().any(|literal| literal.eval(env))
     }
 }
 
@@ -45,6 +53,16 @@ pub struct Literal {
     /// to `false`.
     pub positive: bool,
 }
+impl Literal {
+    pub fn eval(&self, env: &Env) -> bool {
+        if self.positive {
+            self.variable.eval(env)
+        } else {
+            self.variable.eval(env).not()
+        }
+    }
+}
+
 impl Display for Literal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.positive {
@@ -101,7 +119,13 @@ impl Variable {
             positive: false,
         }
     }
+
+    pub fn eval(&self, env: &Env) -> bool {
+        *env.0.get(self).unwrap()
+    }
 }
+
+pub struct Env(HashMap<Variable, bool>);
 
 impl Input {
     pub fn variables(&self) -> impl Iterator<Item = &Variable> {
@@ -243,17 +267,16 @@ fn test_to_qubo() {
 }
 
 impl Input {
+    /// Do... something with the results.
     pub fn handle_results(&self, results: &[Sample]) -> Result<(), anyhow::Error> {
         assert!(!results.is_empty());
-        let best = results[0].instances;
         let variables = self.ordered_variables().collect_vec();
-        for result in results
-            .iter()
-            .take_while(|result| result.instances >= best / 2)
-        {
+        let mut env = Env(HashMap::new());
+        for result in results {
             eprintln!("Instances {}", result.instances);
             let mut writer = csv::Writer::from_writer(std::io::stdout());
             for (c, var) in result.bitstring.chars().zip(variables.iter()) {
+                // Show result.
                 #[derive(Serialize)]
                 struct Record<'a> {
                     variable: &'a str,
@@ -264,6 +287,16 @@ impl Input {
                     value: c,
                 };
                 writer.serialize(record)?;
+
+                // Prepare to check result.
+                env.0.insert((*var).clone(), c == '1');
+            }
+
+            // Double-check that the result is actually meaningful.
+            if self.eval(&env) {
+                println!("=> 1 [PASS]");
+            } else {
+                println!("=> 0 [FAIL]");
             }
         }
         Ok(())

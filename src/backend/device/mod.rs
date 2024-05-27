@@ -33,6 +33,9 @@ impl Device {
     pub fn max_sq_distance_to_center(&self) -> f64 {
         self.max_sq_distance_to_center_um_sq
     }
+    pub fn min_atom_distance(&self) -> f64 {
+        self.min_atom_distance
+    }
 }
 
 impl Serialize for Device {

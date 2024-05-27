@@ -4,17 +4,23 @@ use crate::{backend, runtime::run::Sample};
 
 pub mod max3sat;
 
+/// Formats understood by the various frontends.
+///
+/// As of this writing, we read everything from yaml source files.
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "type")]
 pub enum Input {
+    /// Raw QUBO constraints.
     #[serde(rename = "qubo")]
     Qubo(backend::qubo::Constraints),
 
+    /// An input for maximal 3SAT.
     #[serde(rename = "max3sat")]
     Max3Sat(max3sat::Input),
 }
 
 impl Input {
+    /// Compile the input to a set of QUBO constraints.
     pub fn to_constraints(&self) -> Result<backend::qubo::Constraints, anyhow::Error> {
         match *self {
             Self::Max3Sat(ref input) => Ok(input.to_qubo()),
@@ -24,6 +30,9 @@ impl Input {
 }
 
 impl Input {
+    /// Process results obtained from the QPU or emulator.
+    ///
+    /// Typically, use the input to turn them into something human-readable.
     pub fn handle_results(&self, samples: &[Sample]) -> Result<(), anyhow::Error> {
         match *self {
             Self::Max3Sat(ref input) => input.handle_results(samples),

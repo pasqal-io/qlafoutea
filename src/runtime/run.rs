@@ -10,9 +10,35 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::format::Code;
 
-pub fn run(code: Code) -> Result<(), anyhow::Error> {
-    let samples = run_source(&code.sequence)?;
-    code.problem.handle_results(&samples)?;
+pub struct Options {
+    /// How many results to display.
+    ///
+    /// If this value is in [0., 1.], discard any result
+    /// if the number of samples in which it appears is <
+    /// best result * result_sample_threshold.
+    pub result_sample_threshold: f64,
+}
+
+pub fn run(code: Code, options: Options) -> Result<(), anyhow::Error> {
+    let mut sorted_samples = run_source(&code.sequence)?;
+
+    // Only keep the best entries.
+    let maybe_cut_at = if let Some(best) = sorted_samples.first() {
+        if let Some((first, _)) = sorted_samples.iter().find_position(|sample| {
+            (sample.instances as f64 / best.instances as f64) < options.result_sample_threshold
+        }) {
+            Some(first)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    if let Some(cut_at) = maybe_cut_at {
+        sorted_samples.resize_with(cut_at, || panic!());
+    }
+
+    code.problem.handle_results(&sorted_samples)?;
     Ok(())
 }
 

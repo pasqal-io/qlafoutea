@@ -50,6 +50,14 @@ struct Run {
     ///
     /// It must have been compiled already.
     source: PathBuf,
+
+    /// How many results to display.
+    ///
+    /// If this value is in [0., 1.], discard any result
+    /// if the number of samples in which it appears is <
+    /// best result * result_sample_threshold.
+    #[arg(long, default_value_t = 0.5)]
+    result_sample_threshold: f64,
 }
 
 #[derive(Debug, Parser)]
@@ -125,7 +133,12 @@ fn run(args: Run) -> Result<(), anyhow::Error> {
     runtime::setup()?;
 
     eprintln!("...starting emulation");
-    runtime::run::run(code)?;
+    runtime::run::run(
+        code,
+        runtime::run::Options {
+            result_sample_threshold: args.result_sample_threshold,
+        },
+    )?;
 
     Ok(())
 }
