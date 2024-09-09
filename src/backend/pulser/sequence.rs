@@ -1,6 +1,6 @@
 use std::{collections::HashMap, rc::Rc};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::backend::{
     device::Device,
@@ -23,8 +23,20 @@ impl Sequence {
             channels: channels.to_vec(),
         }
     }
+    pub fn register(&self) -> &Register {
+        &self.register
+    }
+    pub fn device(&self) -> &Device {
+        &self.device
+    }
+    pub fn pulse(&self) -> &Pulse {
+        &self.pulse
+    }
+    pub fn channels(&self) -> &[Rc<str>] {
+        &self.channels
+    }
 }
-/*
+
 impl<'de> Deserialize<'de> for Sequence {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -50,19 +62,19 @@ impl<'de> Deserialize<'de> for Sequence {
             register: schema.register,
             device: schema.device,
             pulse: schema.operations[0].clone(),
-            channels: schema.channels.into_iter().map(|(k, _)| k.into()).collect(),
+            channels: schema.channels.keys().map(|k| k.clone().into()).collect(),
         })
     }
 }
-*/
+
 impl Serialize for Sequence {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
         let schema = Schema {
-            version: "1",
-            name: "qlafoutea compilation target",
+            version: "1".to_string(),
+            name: "qlafoutea compilation target".to_string(),
             register: self.register.clone(),
             device: self.device.clone(),
             variables: HashMap::new(),
@@ -78,13 +90,13 @@ impl Serialize for Sequence {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct Schema {
-    version: &'static str,
+    version: String,
     variables: HashMap<String, ()>, // always empty for the time being.
     register: Rc<Register>,
     device: Rc<Device>,
-    name: &'static str,
+    name: String,
     operations: Vec<Rc<Pulse>>,
     channels: HashMap<String, ChannelId>,
     measurement: Option<()>, // always None for the time being.

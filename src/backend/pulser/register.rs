@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use serde::Serialize;
+use itertools::Itertools;
+use serde::{Deserialize, Serialize};
 
 use crate::types::units::{Coordinates, Micrometers};
 
@@ -39,10 +40,31 @@ impl Serialize for Register {
     }
 }
 
-#[derive(Serialize)]
+impl<'de> Deserialize<'de> for Register {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let schema = Schema::deserialize(deserializer)?;
+        let coordinates = schema
+            .0
+            .into_iter()
+            .map(|atom| Coordinates {
+                x: crate::types::units::Value::new(atom.x),
+                y: crate::types::units::Value::new(atom.y),
+            })
+            .collect_vec();
+        let register = Register {
+            coordinates: coordinates.into(),
+        };
+        Ok(register)
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 pub struct Schema(Vec<AtomSchema>);
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct AtomSchema {
     x: f64,
     y: f64,

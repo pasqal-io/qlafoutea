@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
 pub enum Waveform {
@@ -38,7 +38,7 @@ impl Serialize for Waveform {
         } = *self;
         let duration = timestamps.last().cloned().unwrap();
         let schema = Schema {
-            kind: "interpolated",
+            kind: "interpolated".to_string(),
             duration,
             times: timestamps.iter().map(|v| v / duration).collect(),
             values: values.clone(),
@@ -47,9 +47,22 @@ impl Serialize for Waveform {
     }
 }
 
-#[derive(Serialize)]
+impl<'de> Deserialize<'de> for Waveform {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let schema = Schema::deserialize(deserializer)?;
+        Ok(Waveform::Interpolated {
+            values: schema.values,
+            timestamps: schema.times.iter().map(|v| v * schema.duration).collect(),
+        })
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 struct Schema {
-    kind: &'static str,
+    kind: String,
     duration: f64,
     times: Rc<[f64]>,
     values: Rc<[f64]>,
