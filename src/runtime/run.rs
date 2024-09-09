@@ -8,7 +8,15 @@ use pyo3::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::backend::format::Code;
+use crate::{
+    backend::{format::Code, pulser::sequence::Sequence},
+    studio,
+};
+
+pub enum Runner {
+    PyPulser,
+    PulserStudio,
+}
 
 pub struct Options {
     /// How many results to display.
@@ -17,10 +25,15 @@ pub struct Options {
     /// if the number of samples in which it appears is <
     /// best result * result_sample_threshold.
     pub result_sample_threshold: f64,
+
+    pub runner: Runner,
 }
 
 pub fn run(code: Code, options: Options) -> Result<(), anyhow::Error> {
-    let mut sorted_samples = run_source(&code.sequence)?;
+    let mut sorted_samples = match options.runner {
+        Runner::PyPulser => run_python(&code.sequence)?,
+        Runner::PulserStudio => run_studio(&code.sequence)?,
+    };
 
     // Only keep the best entries.
     let maybe_cut_at = if let Some(best) = sorted_samples.first() {
@@ -48,7 +61,17 @@ pub struct Sample {
     pub instances: u64,
 }
 
-pub fn run_source(source: &str) -> Result<Vec<Sample>, anyhow::Error> {
+pub fn run_python(source: &str) -> Result<Vec<Sample>, anyhow::Error> {
+    let Some(ref executable) = pyo3_build_config::get().executable else {
+        return Err(anyhow::anyhow!("Cannot find a Python environment"));
+    };
+    let mut cmd = std::process::Command::new(executable);
+    cmd.args(["-m", "pip", "install", "pulser"]);
+    cmd.spawn()
+        .context("Failed to launch setup")?
+        .wait()
+        .context("Error while setting up dependencies")?;
+
     pyo3::prepare_freethreaded_python();
     let samples = Python::with_gil(|py| -> Result<HashMap<String, u64>, pyo3::PyErr> {
         let sequence_builder = py.import_bound("pulser")?.getattr("Sequence")?;
@@ -80,4 +103,12 @@ pub fn run_source(source: &str) -> Result<Vec<Sample>, anyhow::Error> {
 
     eprintln!("simulation complete");
     Ok(sorted)
+}
+
+pub fn run_studio(source: &str) -> Result<Vec<Sample>, anyhow::Error> {
+    let sequence: Sequence = serde_json::from_str(source).context("Invalid sequence")?;
+    let studio = studio::Runner::new()?;
+    let mut simulator = studio.simulator()?;
+    simulator.simulate_sequence(sequence)?;
+    unimplemented!()
 }
