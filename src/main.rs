@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fmt::Display, path::PathBuf};
 
 use clap::Parser;
 use qlafoutea::{
@@ -44,6 +44,20 @@ struct Build {
     overflow_protection_threshold: f64,
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum Runner {
+    PyPulser,
+    PulserStudio,
+}
+impl Display for Runner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::PyPulser => write!(f, "python-pulser"),
+            Self::PulserStudio => write!(f, "pulser-studio"),
+        }
+    }
+}
+
 #[derive(clap::Parser, Debug)]
 struct Run {
     /// The file to run.
@@ -58,6 +72,9 @@ struct Run {
     /// best result * result_sample_threshold.
     #[arg(long, default_value_t = 0.5)]
     result_sample_threshold: f64,
+
+    #[arg(long, default_value_t = Runner::PulserStudio)]
+    runner: Runner,
 }
 
 #[derive(Debug, Parser)]
@@ -129,14 +146,15 @@ fn run(args: Run) -> Result<(), anyhow::Error> {
     let input = std::fs::File::open(args.source).expect("Failed to open code");
     let code: Code = serde_yaml::from_reader(input).expect("Failed to parse code");
 
-    eprintln!("...setting up emulator");
-    runtime::setup()?;
-
     eprintln!("...starting emulation");
     runtime::run::run(
         code,
         runtime::run::Options {
             result_sample_threshold: args.result_sample_threshold,
+            runner: match args.runner {
+                Runner::PulserStudio => runtime::run::Runner::PulserStudio,
+                Runner::PyPulser => runtime::run::Runner::PyPulser,
+            },
         },
     )?;
 

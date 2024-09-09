@@ -6,7 +6,7 @@ use qlafoutea::{
         qaa,
         qubo::{self, Constraints},
     },
-    runtime::run::run_source,
+    runtime::run::run_python,
     types::Quality,
 };
 
@@ -84,10 +84,9 @@ fn test_qubo_compile() {
 }
 
 #[test]
-fn test_qubo_compile_and_run() {
+fn test_qubo_compile_and_run_python() {
     let json = qubo_compile();
-    qlafoutea::runtime::setup().unwrap();
-    let samples = run_source(&json).unwrap();
+    let samples = run_python(&json).unwrap();
 
     eprintln!("checking samples {:?}", samples);
 
