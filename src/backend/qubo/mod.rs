@@ -42,6 +42,15 @@ pub enum Error {
 
     #[error("failed to layout")]
     NoSolution,
+
+    #[error("algorithm cannot layout off-diagonal negative values")]
+    NegativeValueOffDiagonal,
+
+    #[error("algorithm cannot layout on-diagonal positive values")]
+    PositiveValueOnDiagonal,
+
+    #[error("value is infinite or not a number")]
+    InfiniteValue,
 }
 
 #[derive(Clone, Debug)]
@@ -69,7 +78,6 @@ impl Default for Options {
 /// For (de)serialization, please use `format::Format`.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Constraints {
-    // FIXME: Check that there is no NaN, no infinite, that all values are reasonable.
     /// A symmetric matrix of weights of size `num_nodes`.
     ///
     /// In practice, the sub-diagonal part of the matrix is redundant.
@@ -110,6 +118,23 @@ impl Constraints {
         self.num_nodes
     }
 
+    pub fn check_compilable_subset(&self) -> Result<(), Error> {
+        for (index, x) in self.data.iter().enumerate() {
+            if !x.is_finite() {
+                return Err(Error::InfiniteValue);
+            }
+            let is_diagonal = index % self.num_nodes == index / self.num_nodes;
+            if is_diagonal {
+                if x.is_sign_positive() {
+                    return Err(Error::PositiveValueOnDiagonal);
+                }
+            } else if x.is_sign_negative() {
+                return Err(Error::NegativeValueOffDiagonal);
+            }
+        }
+        Ok(())
+    }
+
     /// Attempt to layout a set of constraints as a Register.
     ///
     /// In the current implementation, we run N concurrent instances of a Nelder-Mead optimizer,
@@ -120,6 +145,7 @@ impl Constraints {
     /// - Quality: an abstract measure of quality, where 0 is really bad and 1 is optimal;
     /// - seed: the seed with which we found a solution.
     pub fn layout(&self, device: &Device, options: &Options) -> Option<(Register, Quality, u64)> {
+        self.check_compilable_subset().expect("invalid content");
         (0..std::u64::MAX).into_par_iter().find_map_any(|seed| {
             let seed = seed.wrapping_add(options.seed);
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
