@@ -2,29 +2,43 @@
 
 pub mod c6;
 pub mod layout;
-use serde::Serialize;
+
+use c6::C6Coeff;
+use serde::{Deserialize, Serialize};
 
 use layout::Layout;
 
-use crate::pulser::device::{ChannelId, PhysicalChannel, RydbergBeam, RydbergEom};
+use crate::backend::pulser::device::{ChannelId, PhysicalChannel, RydbergBeam, RydbergEom};
 
 pub struct Device {
     interaction_coeff: c6::C6Coeff,
     dimensions: u32,
     rydberg_level: u32,
     max_atom_num: u32,
-    max_radial_distance: u32,
+
+    /// Max distance to the center of the board, in um.
+    max_radial_distance_um: u32,
+    max_sq_distance_to_center_um_sq: f64,
     min_atom_distance: f64,
     max_sequence_duration: u32,
     is_virtual: bool,
     max_layout_filling: f64,
-    name: &'static str,
+    name: String,
     channels: Vec<PhysicalChannel>,
     pre_calibrated_layouts: Vec<Layout>,
 }
 impl Device {
     pub fn interaction_coeff(&self) -> c6::C6Coeff {
         self.interaction_coeff
+    }
+    pub fn max_sq_distance_to_center(&self) -> f64 {
+        self.max_sq_distance_to_center_um_sq
+    }
+    pub fn min_atom_distance(&self) -> f64 {
+        self.min_atom_distance
+    }
+    pub fn rydberg_level(&self) -> u32 {
+        self.rydberg_level
     }
 }
 
@@ -34,16 +48,16 @@ impl Serialize for Device {
         S: serde::Serializer,
     {
         let schema = Schema {
-            version: "1",
+            version: "1".into(),
             dimensions: self.dimensions,
             max_atom_num: self.max_atom_num,
             rydberg_level: self.rydberg_level,
-            max_radial_distance: self.max_radial_distance,
+            max_radial_distance: self.max_radial_distance_um,
             min_atom_distance: self.min_atom_distance,
             max_sequence_duration: self.max_sequence_duration,
             is_virtual: self.is_virtual,
             max_layout_filling: self.max_layout_filling,
-            name: self.name,
+            name: self.name.clone(),
             channels: self.channels.clone(),
             pre_calibrated_layouts: self.pre_calibrated_layouts.clone(),
             interaction_coeff_xy: None,
@@ -54,9 +68,33 @@ impl Serialize for Device {
     }
 }
 
-#[derive(Serialize)]
+impl<'de> Deserialize<'de> for Device {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let schema = Schema::deserialize(deserializer)?;
+        Ok(Self {
+            dimensions: schema.dimensions,
+            max_atom_num: schema.max_atom_num,
+            rydberg_level: schema.rydberg_level,
+            max_radial_distance_um: schema.max_radial_distance,
+            min_atom_distance: schema.min_atom_distance,
+            max_sequence_duration: schema.max_sequence_duration,
+            is_virtual: schema.is_virtual,
+            max_layout_filling: schema.max_layout_filling,
+            name: schema.name,
+            channels: schema.channels.clone(),
+            pre_calibrated_layouts: schema.pre_calibrated_layouts.clone(),
+            interaction_coeff: C6Coeff::new(schema.rydberg_level).unwrap(),
+            max_sq_distance_to_center_um_sq: u64::pow(schema.max_radial_distance as u64, 2) as f64,
+        })
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 struct Schema {
-    version: &'static str,
+    version: String,
     dimensions: u32,
     rydberg_level: u32,
     max_atom_num: u32,
@@ -65,7 +103,7 @@ struct Schema {
     max_sequence_duration: u32,
     is_virtual: bool,
     max_layout_filling: f64,
-    name: &'static str,
+    name: String,
     channels: Vec<PhysicalChannel>,
     pre_calibrated_layouts: Vec<Layout>,
     interaction_coeff_xy: Option<f64>,
@@ -170,17 +208,20 @@ impl Device {
             min_retarget_interval: (),
         }];
 
+        let max_radial_distance_um = 35;
+        let max_sq_distance_to_center_um_sq = (max_radial_distance_um as f64).powi(2);
         Self {
             interaction_coeff,
             dimensions: 2,
             rydberg_level,
             max_atom_num: 25,
-            max_radial_distance: 35,
+            max_radial_distance_um,
             min_atom_distance: 5.,
             max_sequence_duration: 4_000,
+            max_sq_distance_to_center_um_sq,
             is_virtual: false,
             max_layout_filling: 0.5,
-            name: "AnalogDevice",
+            name: "AnalogDevice".into(),
             channels,
             pre_calibrated_layouts,
         }

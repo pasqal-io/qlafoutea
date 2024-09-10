@@ -1,3 +1,5 @@
+use crate::types::units::{Inv, Microseconds, Mul, Pow6, Rad, Value};
+
 #[derive(Clone, Copy, Debug)]
 pub struct C6Coeff {
     /// A value in rad/µs x µm^6.
@@ -83,7 +85,11 @@ impl C6Coeff {
         })
     }
 
-    pub fn value_rad_per_us_times_us_64(&self) -> f64 {
+    pub fn value_rad_per_us_times_um_6(&self) -> f64 {
         self.value_rad_per_us_times_us_64
+    }
+
+    pub fn value_rad_per_us_times(&self) -> Value<Mul<Rad, Inv<Pow6<Microseconds>>>> {
+        Value::new(self.value_rad_per_us_times_us_64)
     }
 }

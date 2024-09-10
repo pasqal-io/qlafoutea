@@ -3,7 +3,7 @@ pub mod units;
 use std::fmt::Display;
 
 /// A quality level in [0, 1]
-#[derive(derive_more::Into, PartialEq)]
+#[derive(derive_more::Into, PartialEq, Clone, Copy, Debug)]
 pub struct Quality(f64);
 
 impl Quality {

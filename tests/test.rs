@@ -1,9 +1,18 @@
-use qlafoutea::{device::Device, qaa, qubo, types::Quality};
+use std::collections::HashSet;
 
-#[test]
-fn test_main() {
+use qlafoutea::{
+    backend::{
+        device::Device,
+        qaa,
+        qubo::{self, Constraints},
+    },
+    runtime::run::run_python,
+    types::Quality,
+};
+
+fn qubo_compile() -> String {
     let half_duration_ns = 4_000;
-    let constraints = qlafoutea::qubo::Constraints::try_new(
+    let constraints = Constraints::try_new(
         5,
         vec![
             -10.0,
@@ -37,14 +46,15 @@ fn test_main() {
 
     let device = Device::analog();
 
-    eprintln!("...compiling {} constraints", constraints.len());
-    let (register, quality) = constraints
+    let (register, quality, _) = constraints
         .layout(
             &device,
             &qubo::Options {
                 min_quality: Quality::new(0.1),
                 seed: 75,
                 max_iters: 1_000,
+                overflow_protection_factor: 0.95,
+                overflow_protection_threshold: 1_000.,
             },
         )
         .expect("Failed to compile qubo");
@@ -54,7 +64,7 @@ fn test_main() {
         quality
     );
 
-    // Step: integrate QAOA.
+    // Step: integrate QAA.
     let sequence = qaa::compile(
         &constraints,
         device,
@@ -64,6 +74,32 @@ fn test_main() {
         },
     );
 
-    let json = serde_json::to_string_pretty(&sequence).unwrap();
+    serde_json::to_string_pretty(&sequence).unwrap()
+}
+
+#[test]
+fn test_qubo_compile() {
+    let json = qubo_compile();
     println!("{json}");
+}
+
+#[test]
+fn test_qubo_compile_and_run_python() {
+    let json = qubo_compile();
+    let samples = run_python(&json).unwrap();
+
+    eprintln!("checking samples {:?}", samples);
+
+    // Compare the best two samples against the known-to-be-best-two
+    // samples, as per https://pulser.readthedocs.io/en/stable/tutorials/qubo.html#Quantum-Adiabatic-Algorithm.
+    //
+    // Note that the order is a bit unstable, so the best two could be
+    // swapped.
+    let best_two: HashSet<_> = samples
+        .iter()
+        .take(2)
+        .map(|sample| sample.bitstring.as_str())
+        .collect();
+    let expected_best_two: HashSet<_> = ["00111", "01011"].into_iter().collect();
+    assert_eq!(best_two, expected_best_two);
 }
