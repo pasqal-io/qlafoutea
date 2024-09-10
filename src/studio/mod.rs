@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(clippy::unused_unit)]
+
 use anyhow::Context;
 use wasmtime::{Caller, Config, Engine, Instance, Linker, Module, Store, TypedFunc, Val};
 
@@ -26,6 +29,7 @@ impl Runner {
         Ok(Runner { engine, module })
     }
     pub fn simulator(&self) -> Result<Simulator, anyhow::Error> {
+        //let _foo = || unimplemented!();
         let mut linker = Linker::new(&self.engine);
 
         /*
@@ -42,16 +46,20 @@ impl Runner {
         linker.func_wrap(
             "wbg",
             "__wbindgen_string_new",
-            |mut _caller: Caller<'_, State>, _a: i32, _b: i32| -> i32 { unimplemented!() },
+            |mut _caller: Caller<'_, State>, _a: i32, _b: i32| -> () {
+                unimplemented!();
+            },
         )?;
+
         linker.func_wrap(
             "wbg",
             "__wbg_set_327aa1a19c3f2018",
-            |_: i32, _: i32, _: i32| {
+            |_: i32, _: i32, _: i32| -> i32 {
                 //getObject(arg0)[takeObject(arg1)] = takeObject(arg2);
-                unimplemented!()
+                unimplemented!();
             },
         )?;
+
         linker.func_wrap(
             "wbg",
             "__wbindgen_object_drop_ref",
@@ -87,7 +95,7 @@ impl Runner {
         linker.func_wrap(
             "wbg",
             "__wbg_stack_0ddaca5d1abfb52f",
-            |_caller: Caller<'_, State>, _idx: i32, _offset: i32| {
+            |_caller: Caller<'_, State>, _idx: i32, _offset: i32| -> () {
                 /*
                        var ret = getObject(arg1).stack;
                        var ptr0 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
@@ -97,16 +105,16 @@ impl Runner {
                 */
                 // As far as I can tell, this stores the stack of a JS error in memory that we never actually
                 // look at. Let's see what happens if we do nothing here!
-                panic!("__wbg_stack_0ddaca5d1abfb52f")
+                panic!("__wbg_stack_0ddaca5d1abfb52f");
             },
         )?;
 
         linker.func_wrap(
             "wbg",
             "__wbg_error_09919627ac0992f5",
-            |_caller: Caller<'_, State>, _idx: i32, _offset: i32| {
+            |_caller: Caller<'_, State>, _idx: i32, _offset: i32| -> () {
                 // This should probably just display an error.
-                panic!("__wbg_error_09919627ac0992f5")
+                panic!("__wbg_error_09919627ac0992f5");
             },
         )?;
 
@@ -153,7 +161,6 @@ impl Runner {
                 .get_typed_func(&mut store, "__wbindgen_realloc")
                 .unwrap(),
         };
-
         Simulator::new(instance, exports, store)
     }
 }

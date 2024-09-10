@@ -146,7 +146,7 @@ impl Constraints {
     /// - seed: the seed with which we found a solution.
     pub fn layout(&self, device: &Device, options: &Options) -> Option<(Register, Quality, u64)> {
         self.check_compilable_subset().expect("invalid content");
-        (0..std::u64::MAX).into_par_iter().find_map_any(|seed| {
+        (0..u64::MAX).into_par_iter().find_map_any(|seed| {
             let seed = seed.wrapping_add(options.seed);
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
