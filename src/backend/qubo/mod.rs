@@ -115,7 +115,7 @@ impl Constraints {
         if data.len() != num_nodes * num_nodes {
             return None;
         }
-        if names.len() != data.len() {
+        if names.len() != num_nodes {
             return None;
         }
         Some(Self {
