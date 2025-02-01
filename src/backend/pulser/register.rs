@@ -9,7 +9,7 @@ use crate::types::units::{Coordinates, Micrometers};
 
 #[derive(Clone)]
 pub struct Register {
-    pub coordinates: Arc<[Coordinates<Micrometers>]>,
+    pub coordinates: Arc<[(Coordinates<Micrometers>, Arc<str>)]>,
 }
 
 #[allow(clippy::len_without_is_empty)]
@@ -28,9 +28,8 @@ impl Serialize for Register {
         let schema = Schema(
             self.coordinates
                 .iter()
-                .enumerate()
-                .map(|(index, c)| AtomSchema {
-                    name: format!("{index}"),
+                .map(|(c, name)| AtomSchema {
+                    name: name.clone(),
                     x: c.x.into_inner(),
                     y: c.y.into_inner(),
                 })
@@ -49,9 +48,14 @@ impl<'de> Deserialize<'de> for Register {
         let coordinates = schema
             .0
             .into_iter()
-            .map(|atom| Coordinates {
-                x: crate::types::units::Value::new(atom.x),
-                y: crate::types::units::Value::new(atom.y),
+            .map(|atom| {
+                (
+                    Coordinates {
+                        x: crate::types::units::Value::new(atom.x),
+                        y: crate::types::units::Value::new(atom.y),
+                    },
+                    atom.name,
+                )
             })
             .collect_vec();
         let register = Register {
@@ -68,5 +72,5 @@ pub struct Schema(Vec<AtomSchema>);
 pub struct AtomSchema {
     x: f64,
     y: f64,
-    name: String,
+    name: Arc<str>,
 }
