@@ -6,7 +6,7 @@ use wasmtime::{Caller, Config, Engine, Instance, Linker, Module, Store, TypedFun
 
 use crate::backend::pulser::sequence::Sequence;
 
-/// Bindings for Pulser studio.
+// Bindings for Pulser studio.
 
 pub struct Runner {
     engine: Engine,
@@ -328,8 +328,8 @@ impl Simulator {
                 &mut self.store,
                 (
                     self.builder_addr,
-                    atom.x.into_inner() as f32,
-                    atom.y.into_inner() as f32,
+                    atom.0.x.into_inner() as f32,
+                    atom.0.y.into_inner() as f32,
                 ),
             )?;
         }

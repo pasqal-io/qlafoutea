@@ -52,7 +52,7 @@ enum Runner {
 impl Display for Runner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match *self {
-            Self::PyPulser => write!(f, "python-pulser"),
+            Self::PyPulser => write!(f, "py-pulser"),
             Self::PulserStudio => write!(f, "pulser-studio"),
         }
     }
@@ -73,7 +73,7 @@ struct Run {
     #[arg(long, default_value_t = 0.5)]
     result_sample_threshold: f64,
 
-    #[arg(long, default_value_t = Runner::PulserStudio)]
+    #[arg(long, default_value_t = Runner::PyPulser)]
     runner: Runner,
 }
 
@@ -100,6 +100,7 @@ fn build(args: Build) -> Result<(), anyhow::Error> {
 
     // Step: compile the qubo to a register.
     eprintln!("...compiling {} constraints", constraints.num_constraints());
+    eprintln!("{}", constraints);
     let (register, quality, seed) = constraints
         .layout(
             &device,

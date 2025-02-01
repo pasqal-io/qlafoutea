@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use itertools::Itertools;
 use qlafoutea::{
     backend::{
         device::Device,
@@ -41,6 +42,10 @@ fn qubo_compile() -> String {
             0.32306662,
             -10.0,
         ],
+        vec!["a", "b", "c", "d", "e"]
+            .into_iter()
+            .map(|x| x.to_string().into())
+            .collect_vec(),
     )
     .unwrap();
 

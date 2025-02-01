@@ -5,14 +5,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::{backend::qubo::Constraints, runtime::run::Sample};
 
-pub type Input = Disjunction;
+#[derive(Deserialize, Serialize, Default)]
+pub struct Input {
+    #[serde(flatten)]
+    disjunction: Disjunction,
+
+    #[serde(default)]
+    restrict: HashMap<Variable, bool>,
+}
 
 /// A problem formulated as a AND of OR of variables/negated variables.
 ///
 /// The solution space is the mapping between the variables used in the problem
 /// and booleans. A solution to the problem is valid iff the disjunction evaluates
 /// to `true`.
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Default)]
 pub struct Disjunction {
     /// A logical "and" operation between a number of conjunctions.
     ///
@@ -103,7 +110,7 @@ impl Serialize for Literal {
 }
 
 /// The name of a variable.
-#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone)]
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Deserialize, Serialize, Debug)]
 pub struct Variable(Arc<str>);
 impl Variable {
     pub fn positive(&self) -> Literal {
@@ -129,7 +136,11 @@ pub struct Env(HashMap<Variable, bool>);
 
 impl Input {
     pub fn variables(&self) -> impl Iterator<Item = &Variable> {
-        self.and.iter().flat_map(|c| c.variables()).dedup()
+        self.disjunction
+            .and
+            .iter()
+            .flat_map(|c| c.variables())
+            .dedup()
     }
 
     pub fn ordered_variables(&self) -> impl Iterator<Item = &Variable> {
@@ -143,13 +154,23 @@ impl Input {
             .enumerate()
             .map(|(i, v)| (v, i))
             .collect();
-        let num_nodes = self.and.len() + variables.len();
-        let mut constraints = Constraints::new(num_nodes);
-        for (conj_offset, conjunction) in self.and.iter().enumerate() {
+        let num_nodes = self.disjunction.and.len() + variables.len();
+
+        // Original variables.
+        let mut names = self
+            .ordered_variables()
+            .map(|var| var.0.clone())
+            .collect_vec();
+        // Expanded variables.
+        for i in 0..self.disjunction.and.len() {
+            names.push(format!("w{}", i).into());
+        }
+        let mut constraints = Constraints::new(num_nodes, names);
+        for (conj_offset, conjunction) in self.disjunction.and.iter().enumerate() {
             // A conjunction Ci = L1 && L2 && L3 is compiled into
             // - ((1 + Ci)(L1 + L2 + L3) - L1.L2 - L1.L3 - L2.L3 - 2 . Ci)
             // -L1 + -L2 + -L3 + -Ci.L1 + -Ci.L2 + -Ci.L3 + L1.L2 + L1.L3 + L2.L3 + 2.Ci
-            let conj_index = conj_offset + self.and.len() - 1;
+            let conj_index = conj_offset + self.disjunction.and.len() - 1;
             let mut delta_conj_var = 2.0;
             eprintln!("conjunction {} => index {}", conj_offset, conj_index);
             for (literal_1_index, literal_1) in conjunction.or.iter().enumerate() {
@@ -227,32 +248,42 @@ fn test_to_qubo() {
     let x_2 = Variable("x_2".into());
     let x_3 = Variable("x_3".into());
     let input = Input {
-        and: vec![
-            Conjunction {
-                or: [x_1.positive(), x_2.positive(), x_3.positive()],
-            },
-            Conjunction {
-                or: [x_1.negative(), x_2.positive(), x_3.positive()],
-            },
-            Conjunction {
-                or: [x_1.positive(), x_2.negative(), x_3.positive()],
-            },
-            Conjunction {
-                or: [x_1.negative(), x_2.positive(), x_3.negative()],
-            },
-        ],
+        disjunction: Disjunction {
+            and: vec![
+                Conjunction {
+                    or: [x_1.positive(), x_2.positive(), x_3.positive()],
+                },
+                Conjunction {
+                    or: [x_1.negative(), x_2.positive(), x_3.positive()],
+                },
+                Conjunction {
+                    or: [x_1.positive(), x_2.negative(), x_3.positive()],
+                },
+                Conjunction {
+                    or: [x_1.negative(), x_2.positive(), x_3.negative()],
+                },
+            ],
+        },
+        ..Default::default()
     };
     let constraints = input.to_qubo();
     assert_eq!(constraints.num_nodes(), 7); // 3 SAT variables, 4 terms.
-    let expected = Constraints::from_const([
-        [0., 0., 0., 0., 0., 0., 0.],
-        [-2., 1., 0., 0., 0., 0., 0.],
-        [2., 0., -1., 0., 0., 0., 0.],
-        [-1., -1., -1., 2., 0., 0., 0.],
-        [1., -1., -1., 0., 1., 0., 0.],
-        [-1., 1., -1., 0., 0., 1., 0.],
-        [1., -1., 1., 0., 0., 0., 0.],
-    ]);
+    let expected = Constraints::from_const(
+        [
+            [0., 0., 0., 0., 0., 0., 0.],
+            [-2., 1., 0., 0., 0., 0., 0.],
+            [2., 0., -1., 0., 0., 0., 0.],
+            [-1., -1., -1., 2., 0., 0., 0.],
+            [1., -1., -1., 0., 1., 0., 0.],
+            [-1., 1., -1., 0., 0., 1., 0.],
+            [1., -1., 1., 0., 0., 0., 0.],
+        ],
+        vec![
+            "x1".to_string().into(),
+            "x2".to_string().into(),
+            "x3".to_string().into(),
+        ],
+    );
     for i in 0..constraints.num_nodes() {
         for j in 0..constraints.num_nodes() {
             assert_eq!(
@@ -272,7 +303,15 @@ impl Input {
         assert!(!results.is_empty());
         let variables = self.ordered_variables().collect_vec();
         let mut env = Env(HashMap::new());
-        for result in results {
+        'per_result: for result in results {
+            for (c, var) in result.bitstring.chars().zip(variables.iter()) {
+                let measure = c == '1';
+                if let Some(restriction) = self.restrict.get(var) {
+                    if measure != *restriction {
+                        continue 'per_result;
+                    }
+                }
+            }
             eprintln!("Instances {}", result.instances);
             let mut writer = csv::Writer::from_writer(std::io::stdout());
             for (c, var) in result.bitstring.chars().zip(variables.iter()) {
@@ -293,7 +332,7 @@ impl Input {
             }
 
             // Double-check that the result is actually meaningful.
-            if self.eval(&env) {
+            if self.disjunction.eval(&env) {
                 println!("=> 1 [PASS]");
             } else {
                 println!("=> 0 [FAIL]");

@@ -8,7 +8,7 @@
 //!
 //! sum_{i, j}(Q[i, j] * x [i] * x[j])
 
-use std::fmt::Display;
+use std::{fmt::Display, sync::Arc};
 
 use argmin::{
     core::{CostFunction, Executor},
@@ -87,25 +87,42 @@ pub struct Constraints {
     /// In this implementation, we don't make the effort.
     data: Vec<f64>,
     num_nodes: usize,
+    names: Vec<Arc<str>>,
 }
+
 #[allow(clippy::len_without_is_empty)]
 impl Constraints {
-    pub fn new(num_nodes: usize) -> Self {
+    pub fn new(num_nodes: usize, names: Vec<Arc<str>>) -> Self {
         let data = vec![0.; num_nodes * num_nodes];
-        Self { data, num_nodes }
+        assert_eq!(names.len(), num_nodes);
+        Self {
+            data,
+            num_nodes,
+            names,
+        }
     }
-
-    pub fn from_const<const N: usize>(data: [[f64; N]; N]) -> Self {
+    pub fn from_const<const N: usize>(data: [[f64; N]; N], names: Vec<Arc<str>>) -> Self {
+        assert_eq!(names.len(), data.len());
         let data = data.iter().flat_map(|d| d.iter()).cloned().collect();
-        Self { data, num_nodes: N }
+        Self {
+            data,
+            num_nodes: N,
+            names,
+        }
     }
-
     #[allow(dead_code)]
-    pub fn try_new(num_nodes: usize, data: Vec<f64>) -> Option<Self> {
+    pub fn try_new(num_nodes: usize, data: Vec<f64>, names: Vec<Arc<str>>) -> Option<Self> {
         if data.len() != num_nodes * num_nodes {
             return None;
         }
-        Some(Self { data, num_nodes })
+        if names.len() != data.len() {
+            return None;
+        }
+        Some(Self {
+            data,
+            num_nodes,
+            names,
+        })
     }
 
     /// Return the number of constraints.
@@ -145,7 +162,9 @@ impl Constraints {
     /// - Quality: an abstract measure of quality, where 0 is really bad and 1 is optimal;
     /// - seed: the seed with which we found a solution.
     pub fn layout(&self, device: &Device, options: &Options) -> Option<(Register, Quality, u64)> {
-        self.check_compilable_subset().expect("invalid content");
+        // self.check_compilable_subset().expect("invalid content");
+        // FIXME: We should add laser channels to the parameters we optimize!
+
         (0..u64::MAX).into_par_iter().find_map_any(|seed| {
             let seed = seed.wrapping_add(options.seed);
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
@@ -184,7 +203,8 @@ impl Constraints {
                     let mut iter = v.into_iter();
                     let mut coordinates = Vec::with_capacity(self.num_nodes);
                     while let Some((x, y)) = iter.next_tuple() {
-                        coordinates.push(Coordinates::<Micrometers>::new(x, y))
+                        let name = self.names[coordinates.len()].clone();
+                        coordinates.push((Coordinates::<Micrometers>::new(x, y), name))
                     }
                     coordinates
                 }
@@ -245,9 +265,10 @@ impl Constraints {
         Ok(self.num_nodes * y + x)
     }
 }
+
 impl Display for Constraints {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut buf = String::new();
+        let mut buf = "[".to_string();
         for y in 0..self.num_nodes {
             let mut line = if y == 0 {
                 "[".to_string()
@@ -276,7 +297,7 @@ struct Cost<'a> {
     device: &'a Device,
     options: Options,
 }
-impl<'a> Cost<'a> {
+impl Cost<'_> {
     fn actual_interaction(
         &self,
         first: Coordinates<Micrometers>,
@@ -298,7 +319,7 @@ impl<'a> Cost<'a> {
     }
 }
 
-impl<'a> CostFunction for Cost<'a> {
+impl CostFunction for Cost<'_> {
     type Param = Vec<f64>;
 
     type Output = f64;
@@ -381,6 +402,10 @@ fn test_cost_function_vs_python() {
                 0.32306662,
                 -10.0,
             ],
+            vec!["a", "b", "c", "d", "e"]
+                .into_iter()
+                .map(|x| x.to_string().into())
+                .collect_vec(),
         )
         .unwrap(),
         options: Options::default(),
