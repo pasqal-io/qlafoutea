@@ -282,6 +282,10 @@ fn test_to_qubo() {
             "x1".to_string().into(),
             "x2".to_string().into(),
             "x3".to_string().into(),
+            "_0".to_string().into(),
+            "_1".to_string().into(),
+            "_2".to_string().into(),
+            "_3".to_string().into(),
         ],
     );
     for i in 0..constraints.num_nodes() {
