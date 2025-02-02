@@ -58,6 +58,7 @@ pub struct Options {
     pub seed: u64,
     pub min_quality: Quality,
     pub max_iters: u64,
+    pub max_attempts: u64,
     pub overflow_protection_threshold: f64,
     pub overflow_protection_factor: f64,
 }
@@ -67,6 +68,7 @@ impl Default for Options {
             seed: 0,
             min_quality: Quality::new(0.2),
             max_iters: 4_000,
+            max_attempts: 100,
             overflow_protection_threshold: 0.9,
             overflow_protection_factor: 1_000.,
         }
@@ -161,65 +163,58 @@ impl Constraints {
     /// - Register: the geometry;
     /// - Quality: an abstract measure of quality, where 0 is really bad and 1 is optimal;
     /// - seed: the seed with which we found a solution.
-    pub fn layout(&self, device: &Device, options: &Options) -> Option<(Register, Quality, u64)> {
+    pub fn layout(&self, device: &Device, options: &Options) -> (Register, Quality, u64) {
         // self.check_compilable_subset().expect("invalid content");
         // FIXME: We should add laser channels to the parameters we optimize!
 
-        (0..u64::MAX).into_par_iter().find_map_any(|seed| {
-            let seed = seed.wrapping_add(options.seed);
-            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        (0..options.max_attempts)
+            .into_par_iter()
+            .map(|seed| {
+                let seed = seed.wrapping_add(options.seed);
+                let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
-            // Set initial search points.
-            //
-            // Our search space has 2 * num_node dimensions (we're looking for 2 coordinates per node).
-            // By definition, Nelder-Mead must take dimensions + 1 starting points.
-            //
-            // Since we wish to be reproducible, we initialize these points from `rng`, which can be
-            // seeded by the caller.
-            let mut params = Vec::with_capacity(self.num_nodes * 2 + 1);
-            for _ in 0..self.num_nodes {
-                let mut state = vec![0f64; self.num_nodes * 2];
-                rng.fill(state.as_mut_slice());
-                params.push(state);
-            }
-            let solver = NelderMead::new(params);
-
-            let cost = Cost {
-                constraints: self,
-                device,
-                options: options.clone(),
-            };
-
-            let optimized = Executor::new(cost, solver)
-                .configure(|state| state.max_iters(options.max_iters).target_cost(1e-6))
-                .run()
-                .expect("Error in the execution of register optimizer");
-            let quality = 1. - optimized.state.best_cost.atan() / std::f64::consts::FRAC_PI_2;
-            let quality = Quality::new(quality);
-            let coordinates = match optimized.state.best_param {
-                None => return None,
-                Some(v) => {
-                    assert!(v.len() % 2 == 0);
-                    let mut iter = v.into_iter();
-                    let mut coordinates = Vec::with_capacity(self.num_nodes);
-                    while let Some((x, y)) = iter.next_tuple() {
-                        let name = self.names[coordinates.len()].clone();
-                        coordinates.push((Coordinates::<Micrometers>::new(x, y), name))
-                    }
-                    coordinates
+                // Set initial search points.
+                //
+                // Our search space has 2 * num_node dimensions (we're looking for 2 coordinates per node).
+                // By definition, Nelder-Mead must take dimensions + 1 starting points.
+                //
+                // Since we wish to be reproducible, we initialize these points from `rng`, which can be
+                // seeded by the caller.
+                let mut params = Vec::with_capacity(self.num_nodes * 2 + 1);
+                for _ in 0..self.num_nodes {
+                    let mut state = vec![0f64; self.num_nodes * 2];
+                    rng.fill(state.as_mut_slice());
+                    params.push(state);
                 }
-            };
-            let register = Register {
-                coordinates: coordinates.into(),
-            };
+                let solver = NelderMead::new(params);
 
-            if quality >= options.min_quality {
-                Some((register, quality, seed))
-            } else {
-                eprintln!("...testing seed {seed} => insufficient quality {}", quality);
-                None
-            }
-        })
+                let cost = Cost {
+                    constraints: self,
+                    device,
+                    options: options.clone(),
+                };
+
+                let optimized = Executor::new(cost, solver)
+                    .configure(|state| state.max_iters(options.max_iters).target_cost(1e-6))
+                    .run()
+                    .expect("Error in the execution of register optimizer");
+                let quality = 1. - optimized.state.best_cost.atan() / std::f64::consts::FRAC_PI_2;
+                let quality = Quality::new(quality);
+                let v = optimized.state.best_param.unwrap();
+                assert!(v.len() % 2 == 0);
+                let mut iter = v.into_iter();
+                let mut coordinates = Vec::with_capacity(self.num_nodes);
+                while let Some((x, y)) = iter.next_tuple() {
+                    let name = self.names[coordinates.len()].clone();
+                    coordinates.push((Coordinates::<Micrometers>::new(x, y), name))
+                }
+                let register = Register {
+                    coordinates: coordinates.into(),
+                };
+                (register, quality, seed)
+            })
+            .max_by_key(|result: &(Register, Quality, u64)| result.1)
+            .unwrap() // Let's assume that the list of samples is not empty.
     }
 
     pub fn omega(&self) -> f64 {
@@ -246,6 +241,7 @@ impl Constraints {
     /// Change a value at given coordinates.
     pub fn delta_at(&mut self, x: usize, y: usize, delta: f64) -> Result<(), Error> {
         let ref_mut = self.get_mut(x, y)?;
+        eprintln!("delta_at[{x},{y}]: {} => {}", ref_mut, delta);
         *ref_mut += delta;
         Ok(())
     }
@@ -277,9 +273,9 @@ impl Display for Constraints {
             };
             for x in 0..self.num_nodes {
                 if x == 0 {
-                    line.push_str(&format!("{}", self.at(x, y).unwrap()));
+                    line.push_str(&format!("{:2}", self.at(x, y).unwrap()));
                 } else {
-                    line.push_str(&format!(", {}", self.at(x, y).unwrap()));
+                    line.push_str(&format!(", {:2}", self.at(x, y).unwrap()));
                 }
             }
             buf.push_str(&format!(

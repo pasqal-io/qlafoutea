@@ -1,3 +1,4 @@
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::{backend, runtime::run::Sample};
@@ -23,7 +24,7 @@ impl Input {
     /// Compile the input to a set of QUBO constraints.
     pub fn to_constraints(&self) -> Result<backend::qubo::Constraints, anyhow::Error> {
         match *self {
-            Self::Max3Sat(ref input) => Ok(input.to_qubo()),
+            Self::Max3Sat(ref input) => input.to_qubo().context("failed to resolve QUBO"),
             Self::Qubo(ref input) => Ok(input.clone()),
         }
     }

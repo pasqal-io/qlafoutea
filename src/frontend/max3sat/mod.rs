@@ -1,5 +1,6 @@
 use std::{borrow::Cow, collections::HashMap, fmt::Display, ops::Not, sync::Arc};
 
+use anyhow::anyhow;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +9,7 @@ use crate::{backend::qubo::Constraints, runtime::run::Sample};
 #[derive(Deserialize, Serialize, Default)]
 pub struct Input {
     #[serde(flatten)]
-    disjunction: Disjunction,
+    conjunction: And,
 
     #[serde(default)]
     restrict: HashMap<Variable, bool>,
@@ -17,30 +18,30 @@ pub struct Input {
 /// A problem formulated as a AND of OR of variables/negated variables.
 ///
 /// The solution space is the mapping between the variables used in the problem
-/// and booleans. A solution to the problem is valid iff the disjunction evaluates
+/// and booleans. A solution to the problem is valid iff the conjunction evaluates
 /// to `true`.
 #[derive(Deserialize, Serialize, Default)]
-pub struct Disjunction {
+pub struct And {
     /// A logical "and" operation between a number of conjunctions.
     ///
     /// It evaluates to `true` for a solution iff all the conjunctions evaluate to `true`.
-    pub and: Vec<Conjunction>,
+    pub and: Vec<Or>,
 }
-impl Disjunction {
+impl And {
     pub fn eval(&self, env: &Env) -> bool {
         self.and.iter().all(|literal| literal.eval(env))
     }
 }
 
-/// A logical conjunction, e.g. a OR of variables/negated variables.
+/// A logical disjunction, e.g. a OR of variables/negated variables.
 #[derive(Deserialize, Serialize)]
-pub struct Conjunction {
+pub struct Or {
     /// A logical "or" operation between a number of literals.
     ///
     /// It evaluates to `true` for a solution iff at least one of the literals evaluates to `true`.
-    pub or: [Literal; 3],
+    pub or: Vec<Literal>,
 }
-impl Conjunction {
+impl Or {
     pub fn variables(&self) -> impl Iterator<Item = &Variable> {
         self.or.iter().map(|literal| &literal.variable)
     }
@@ -136,7 +137,7 @@ pub struct Env(HashMap<Variable, bool>);
 
 impl Input {
     pub fn variables(&self) -> impl Iterator<Item = &Variable> {
-        self.disjunction
+        self.conjunction
             .and
             .iter()
             .flat_map(|c| c.variables())
@@ -147,14 +148,14 @@ impl Input {
         self.variables().sorted().dedup()
     }
 
-    pub fn to_qubo(&self) -> Constraints {
+    pub fn to_qubo(&self) -> Result<Constraints, anyhow::Error> {
         // Collect variables and assign to each an index.
         let variables: HashMap<&Variable, usize> = self
             .ordered_variables()
             .enumerate()
             .map(|(i, v)| (v, i))
             .collect();
-        let num_nodes = self.disjunction.and.len() + variables.len();
+        let num_nodes = self.conjunction.and.len() + variables.len();
 
         // Original variables.
         let mut names = self
@@ -162,81 +163,112 @@ impl Input {
             .map(|var| var.0.clone())
             .collect_vec();
         // Expanded variables.
-        for i in 0..self.disjunction.and.len() {
+        for i in 0..self.conjunction.and.len() {
             names.push(format!("w{}", i).into());
         }
+        // FIXME: We should progressively increase the size of `Constraints`, instead of precomputing `num_nodes`.
         let mut constraints = Constraints::new(num_nodes, names);
-        for (conj_offset, conjunction) in self.disjunction.and.iter().enumerate() {
-            // A conjunction Ci = L1 && L2 && L3 is compiled into
-            // - ((1 + Ci)(L1 + L2 + L3) - L1.L2 - L1.L3 - L2.L3 - 2 . Ci)
-            // -L1 + -L2 + -L3 + -Ci.L1 + -Ci.L2 + -Ci.L3 + L1.L2 + L1.L3 + L2.L3 + 2.Ci
-            let conj_index = conj_offset + self.disjunction.and.len() - 1;
-            let mut delta_conj_var = 2.0;
-            eprintln!("conjunction {} => index {}", conj_offset, conj_index);
-            for (literal_1_index, literal_1) in conjunction.or.iter().enumerate() {
-                let var_1_index = variables.get(&literal_1.variable).cloned().unwrap();
-                eprintln!("literal {} => index {}", literal_1.variable.0, var_1_index);
+        for (conj_offset, disjunction) in self.conjunction.and.iter().enumerate() {
+            match disjunction.or.as_slice() {
+                [single] => {
+                    // Single literal L.
+                    //
+                    // Any solution to 3SAT must first maximize L, so encode L as itself.
+                    let var_index = variables.get(&single.variable).cloned().unwrap();
+                    if single.positive {
+                        constraints.delta_at(var_index, var_index, 1.0)?;
+                    } else {
+                        constraints.delta_at(var_index, var_index, -1.0)?;
+                    }
+                }
+                [a, b] => {}
+                or if or.len() == 3 => {
+                    // A disjunction L = L1 \/ L2 \/ L3
+                    //
+                    // Any solution to 3SAT must first maximize
+                    // L1 + L2 + L3 - L1.L2 - L2.L3 - L1.L3 + L1.L2.L3
+                    //
+                    // This is equivalent to maximizing
+                    // - ((1 + Ci)(L1 + L2 + L3) - L1.L2 - L1.L3 - L2.L3 - 2 . Ci)
+                    // =
+                    //
+                    // A conjunction Ci = L1 && L2 && L3 is compiled into
+                    // -L1 + -L2 + -L3 + -Ci.L1 + -Ci.L2 + -Ci.L3 + L1.L2 + L1.L3 + L2.L3 + 2.Ci
+                    let conj_index = conj_offset + variables.len();
+                    let mut delta_conj_var = 2.0;
+                    eprintln!("disjunction {} => index {}", conj_offset, conj_index);
+                    for (literal_1_index, literal_1) in disjunction.or.iter().enumerate() {
+                        let var_1_index = variables.get(&literal_1.variable).cloned().unwrap();
+                        eprintln!("literal {} => index {}", literal_1.variable.0, var_1_index);
 
-                // Encode term `-Lj`.
-                let delta_var_1 = if literal_1.positive { -1.0 } else { 1.0 };
-                constraints
-                    .delta_at(var_1_index, var_1_index, delta_var_1)
-                    .unwrap();
+                        // Encode term `-Lj`.
+                        let delta_var_1 = if literal_1.positive { -1.0 } else { 1.0 };
+                        constraints
+                            .delta_at(var_1_index, var_1_index, delta_var_1)
+                            .unwrap();
 
-                // Encode term `Lj.Lk` for k > j.
-                for literal_2 in conjunction.or.iter().skip(literal_1_index + 1) {
-                    let var_2_index = variables.get(&literal_2.variable).cloned().unwrap();
-                    let (delta_product_2, delta_var_1, delta_var_2) =
-                        match (literal_1.positive, literal_2.positive) {
-                            (true, true) => {
-                                //Vj.Vk
-                                (1.0, 0.0, 0.0)
-                            }
-                            (true, false) => {
-                                // (Vj.(1 - Vk)) = Vj - Vj.Vk
-                                (-1.0, 1.0, 0.0)
-                            }
-                            (false, true) => {
-                                // ((1 - Vj).Vk) = Vk - Vj.Vk
-                                (-1.0, 0.0, 1.0)
-                            }
-                            (false, false) => {
-                                // (1 - Vj).(1 - Vk) = 1 - Vj - Vk + Vj.Vk
-                                (1.0, -1.0, -1.0)
-                            }
+                        // Encode term `Lj.Lk` for k > j.
+                        for literal_2 in disjunction.or.iter().skip(literal_1_index + 1) {
+                            let var_2_index = variables.get(&literal_2.variable).cloned().unwrap();
+                            let (delta_product_2, delta_var_1, delta_var_2) =
+                                match (literal_1.positive, literal_2.positive) {
+                                    (true, true) => {
+                                        //Vj.Vk
+                                        (1.0, 0.0, 0.0)
+                                    }
+                                    (true, false) => {
+                                        // (Vj.(1 - Vk)) = Vj - Vj.Vk
+                                        (-1.0, 1.0, 0.0)
+                                    }
+                                    (false, true) => {
+                                        // ((1 - Vj).Vk) = Vk - Vj.Vk
+                                        (-1.0, 0.0, 1.0)
+                                    }
+                                    (false, false) => {
+                                        // (1 - Vj).(1 - Vk) = 1 - Vj - Vk + Vj.Vk
+                                        (1.0, -1.0, -1.0)
+                                    }
+                                };
+                            constraints
+                                .delta_at(var_1_index, var_1_index, delta_var_1)
+                                .unwrap();
+                            constraints
+                                .delta_at(var_2_index, var_2_index, delta_var_2)
+                                .unwrap();
+                            constraints
+                                .delta_at(var_1_index, var_2_index, delta_product_2)
+                                .unwrap();
+                        }
+
+                        // Encode term `-Ci.Lj`
+                        eprintln!("product3 {}, {}", var_1_index, conj_index);
+                        let (delta_prod_3, additional_delta_conj_var) = if literal_1.positive {
+                            (-1.0, 0.0)
+                        } else {
+                            (1.0, -1.0)
                         };
+                        constraints
+                            .delta_at(var_1_index, conj_index, delta_prod_3)
+                            .unwrap();
+
+                        delta_conj_var += additional_delta_conj_var;
+                    }
+
+                    // Encode term `2.Ci`
+                    eprintln!("C[{}]", conj_offset);
                     constraints
-                        .delta_at(var_1_index, var_1_index, delta_var_1)
-                        .unwrap();
-                    constraints
-                        .delta_at(var_2_index, var_2_index, delta_var_2)
-                        .unwrap();
-                    constraints
-                        .delta_at(var_1_index, var_2_index, delta_product_2)
+                        .delta_at(conj_index, conj_index, delta_conj_var)
                         .unwrap();
                 }
-
-                // Encode term `-Ci.Lj`
-                eprintln!("product3 {}, {}", var_1_index, conj_index);
-                let (delta_prod_3, additional_delta_conj_var) = if literal_1.positive {
-                    (-1.0, 0.0)
-                } else {
-                    (1.0, -1.0)
-                };
-                constraints
-                    .delta_at(var_1_index, conj_index, delta_prod_3)
-                    .unwrap();
-
-                delta_conj_var += additional_delta_conj_var;
+                _ => {
+                    return Err(anyhow!(
+                        "Invalid size, expected 1-3, got {}",
+                        disjunction.or.len()
+                    ));
+                }
             }
-
-            // Encode term `2.Ci`
-            eprintln!("C[{}]", conj_offset);
-            constraints
-                .delta_at(conj_index, conj_index, delta_conj_var)
-                .unwrap();
         }
-        constraints
+        Ok(constraints)
     }
 }
 
@@ -248,25 +280,25 @@ fn test_to_qubo() {
     let x_2 = Variable("x_2".into());
     let x_3 = Variable("x_3".into());
     let input = Input {
-        disjunction: Disjunction {
+        conjunction: And {
             and: vec![
-                Conjunction {
-                    or: [x_1.positive(), x_2.positive(), x_3.positive()],
+                Or {
+                    or: [x_1.positive(), x_2.positive(), x_3.positive()].into(),
                 },
-                Conjunction {
-                    or: [x_1.negative(), x_2.positive(), x_3.positive()],
+                Or {
+                    or: [x_1.negative(), x_2.positive(), x_3.positive()].into(),
                 },
-                Conjunction {
-                    or: [x_1.positive(), x_2.negative(), x_3.positive()],
+                Or {
+                    or: [x_1.positive(), x_2.negative(), x_3.positive()].into(),
                 },
-                Conjunction {
-                    or: [x_1.negative(), x_2.positive(), x_3.negative()],
+                Or {
+                    or: [x_1.negative(), x_2.positive(), x_3.negative()].into(),
                 },
             ],
         },
         ..Default::default()
     };
-    let constraints = input.to_qubo();
+    let constraints = input.to_qubo().unwrap();
     assert_eq!(constraints.num_nodes(), 7); // 3 SAT variables, 4 terms.
     let expected = Constraints::from_const(
         [
@@ -336,7 +368,7 @@ impl Input {
             }
 
             // Double-check that the result is actually meaningful.
-            if self.disjunction.eval(&env) {
+            if self.conjunction.eval(&env) {
                 println!("=> 1 [PASS]");
             } else {
                 println!("=> 0 [FAIL]");

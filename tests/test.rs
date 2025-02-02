@@ -51,18 +51,17 @@ fn qubo_compile() -> String {
 
     let device = Device::analog();
 
-    let (register, quality, _) = constraints
-        .layout(
-            &device,
-            &qubo::Options {
-                min_quality: Quality::new(0.1),
-                seed: 75,
-                max_iters: 1_000,
-                overflow_protection_factor: 0.95,
-                overflow_protection_threshold: 1_000.,
-            },
-        )
-        .expect("Failed to compile qubo");
+    let (register, quality, _) = constraints.layout(
+        &device,
+        &qubo::Options {
+            min_quality: Quality::new(0.1),
+            seed: 75,
+            max_iters: 1_000,
+            max_attempts: 100,
+            overflow_protection_factor: 0.95,
+            overflow_protection_threshold: 1_000.,
+        },
+    );
     eprintln!(
         "...compiled to {} qubits with a quality of {}",
         register.len(),

@@ -15,9 +15,20 @@ impl Quality {
     }
 }
 
+impl Eq for Quality {}
+
 impl PartialOrd for Quality {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.partial_cmp(&other.0)
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Quality {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.0.partial_cmp(&other.0) {
+            None => std::cmp::Ordering::Equal,
+            Some(o) => o,
+        }
     }
 }
 
