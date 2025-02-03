@@ -1,0 +1,13 @@
+type: max3sat
+and:
+  - or:
+    - a
+    - x0
+    - x1
+  - or:
+    - NOT a
+    - b
+    - x0
+restrict:
+  x0: false
+  x1: false

@@ -75,6 +75,43 @@ impl Default for Options {
     }
 }
 
+pub struct ConstraintsCollector {
+    num_nodes: usize,
+    constraints: Vec<(usize, usize, f64)>,
+}
+impl ConstraintsCollector {
+    pub fn new(num_variables: usize) -> Self {
+        eprintln!("ConstraintsCollector::new {}", num_variables);
+        ConstraintsCollector {
+            num_nodes: num_variables,
+            constraints: Vec::with_capacity(num_variables * num_variables),
+        }
+    }
+    pub fn add_variable(&mut self) -> usize {
+        let var_index = self.num_nodes;
+        self.num_nodes += 1;
+        eprintln!("ConstraintsCollector::add_variable {}", var_index);
+        var_index
+    }
+
+    pub fn add_constraint(&mut self, i: usize, j: usize, constraint: f64) {
+        let (i, j) = if i < j { (i, j) } else { (j, i) };
+        assert!(j < self.num_nodes);
+        self.constraints.push((i, j, constraint));
+    }
+
+    pub fn collect(self, names: Vec<Arc<str>>) -> Constraints {
+        eprintln!("collect {:?}", names);
+        assert_eq!(names.len(), self.num_nodes);
+        let mut constraints = Constraints::new(self.num_nodes, names);
+
+        for (i, j, delta) in self.constraints {
+            constraints.delta_at(i, j, delta).unwrap();
+        }
+        constraints
+    }
+}
+
 /// A set of qubo constraints.
 ///
 /// For (de)serialization, please use `format::Format`.
@@ -241,7 +278,12 @@ impl Constraints {
     /// Change a value at given coordinates.
     pub fn delta_at(&mut self, x: usize, y: usize, delta: f64) -> Result<(), Error> {
         let ref_mut = self.get_mut(x, y)?;
-        eprintln!("delta_at[{x},{y}]: {} => {}", ref_mut, delta);
+        eprintln!(
+            "delta_at[{x},{y}]: {} + {} = {}",
+            ref_mut,
+            delta,
+            *ref_mut + delta
+        );
         *ref_mut += delta;
         Ok(())
     }

@@ -4,7 +4,10 @@ use anyhow::anyhow;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-use crate::{backend::qubo::Constraints, runtime::run::Sample};
+use crate::{
+    backend::qubo::{Constraints, ConstraintsCollector},
+    runtime::run::Sample,
+};
 
 #[derive(Deserialize, Serialize, Default)]
 pub struct Input {
@@ -50,6 +53,7 @@ impl Or {
     }
 }
 
+#[derive(Clone, Debug)]
 /// Either a variable or a negated variable.
 pub struct Literal {
     /// The name of the variable.
@@ -155,110 +159,117 @@ impl Input {
             .enumerate()
             .map(|(i, v)| (v, i))
             .collect();
-        let num_nodes = self.conjunction.and.len() + variables.len();
 
         // Original variables.
         let mut names = self
             .ordered_variables()
             .map(|var| var.0.clone())
             .collect_vec();
-        // Expanded variables.
-        for i in 0..self.conjunction.and.len() {
-            names.push(format!("w{}", i).into());
-        }
-        // FIXME: We should progressively increase the size of `Constraints`, instead of precomputing `num_nodes`.
-        let mut constraints = Constraints::new(num_nodes, names);
-        for (conj_offset, disjunction) in self.conjunction.and.iter().enumerate() {
-            match disjunction.or.as_slice() {
-                [single] => {
+
+        let mut collector = ConstraintsCollector::new(variables.len());
+        for disjunction in self.conjunction.and.iter() {
+            let mut indexed: arrayvec::ArrayVec<(Literal, usize), 4> = disjunction
+                .or
+                .iter()
+                .map(|lit| {
+                    let index = variables
+                        .get(&lit.variable)
+                        .cloned()
+                        .expect("Missing variable");
+                    (lit.clone(), index)
+                })
+                .collect();
+            let self_constraint = |collector: &mut ConstraintsCollector,
+                                   indexed: &[(Literal, usize)],
+                                   local_index: usize,
+                                   multiplier: f64| {
+                let (lit, index) = &indexed[local_index];
+                if lit.positive {
+                    collector.add_constraint(*index, *index, multiplier);
+                } else {
+                    collector.add_constraint(*index, *index, -multiplier);
+                }
+            };
+            let cross_constraint = |collector: &mut ConstraintsCollector,
+                                    indexed: &[(Literal, usize)],
+                                    i: usize,
+                                    j: usize,
+                                    multiplier: f64| {
+                let (left_lit, left_index) = &indexed[i];
+                let (right_lit, right_index) = &indexed[j];
+                if left_lit.positive == right_lit.positive {
+                    collector.add_constraint(*left_index, *right_index, multiplier);
+                } else {
+                    collector.add_constraint(*left_index, *right_index, -multiplier);
+                }
+            };
+            match disjunction.or.len() {
+                1 => {
                     // Single literal L.
                     //
                     // Any solution to 3SAT must first maximize L, so encode L as itself.
-                    let var_index = variables.get(&single.variable).cloned().unwrap();
-                    if single.positive {
-                        constraints.delta_at(var_index, var_index, 1.0)?;
-                    } else {
-                        constraints.delta_at(var_index, var_index, -1.0)?;
-                    }
+                    self_constraint(&mut collector, &indexed, 0, 1.0);
                 }
-                [a, b] => {}
-                or if or.len() == 3 => {
-                    // A disjunction L = L1 \/ L2 \/ L3
+                2 => {
+                    // A disjunction K = L1 \/ L2
                     //
-                    // Any solution to 3SAT must first maximize
-                    // L1 + L2 + L3 - L1.L2 - L2.L3 - L1.L3 + L1.L2.L3
+                    // Any solution to 3SAT must first maximize  L1 + L2 - L1.L2
+
+                    // Encode L1 + L2
+                    for i in 0..indexed.len() {
+                        self_constraint(&mut collector, &indexed, i, 1.0);
+                    }
+                    // Encode - L1.L2
+                    cross_constraint(&mut collector, &indexed, 0, 1, -1.0);
+                }
+                3 => {
+                    // A disjunction K = L1 \/ L2 \/ L3
                     //
-                    // This is equivalent to maximizing
-                    // - ((1 + Ci)(L1 + L2 + L3) - L1.L2 - L1.L3 - L2.L3 - 2 . Ci)
-                    // =
+                    // K == true has the same truth table as
+                    // K' = L1 + L2 + L3 - L1.L2 - L2.L3 - L1.L3 + L1.L2.L3 == 1
                     //
-                    // A conjunction Ci = L1 && L2 && L3 is compiled into
-                    // -L1 + -L2 + -L3 + -Ci.L1 + -Ci.L2 + -Ci.L3 + L1.L2 + L1.L3 + L2.L3 + 2.Ci
-                    let conj_index = conj_offset + variables.len();
-                    let mut delta_conj_var = 2.0;
-                    eprintln!("disjunction {} => index {}", conj_offset, conj_index);
-                    for (literal_1_index, literal_1) in disjunction.or.iter().enumerate() {
-                        let var_1_index = variables.get(&literal_1.variable).cloned().unwrap();
-                        eprintln!("literal {} => index {}", literal_1.variable.0, var_1_index);
+                    // Finding a solution to K == true is therefore equivalent to maximizing K'
+                    //
+                    // We introduce a new variable C. This is equivalent to maximizing
+                    // K' = L1 + L2 + L3 - L1.L2 - L2.L3 - L1.L3 + C.(L1 + L2 + L3 - 2)
+                    //
+                    // or, equivalently
+                    //      L1 + L2 + L3 - L1.L2 - L2.L3 - L1.L3 + C.L1 + C.L2 + C.L3 - 2.C
 
-                        // Encode term `-Lj`.
-                        let delta_var_1 = if literal_1.positive { -1.0 } else { 1.0 };
-                        constraints
-                            .delta_at(var_1_index, var_1_index, delta_var_1)
-                            .unwrap();
-
-                        // Encode term `Lj.Lk` for k > j.
-                        for literal_2 in disjunction.or.iter().skip(literal_1_index + 1) {
-                            let var_2_index = variables.get(&literal_2.variable).cloned().unwrap();
-                            let (delta_product_2, delta_var_1, delta_var_2) =
-                                match (literal_1.positive, literal_2.positive) {
-                                    (true, true) => {
-                                        //Vj.Vk
-                                        (1.0, 0.0, 0.0)
-                                    }
-                                    (true, false) => {
-                                        // (Vj.(1 - Vk)) = Vj - Vj.Vk
-                                        (-1.0, 1.0, 0.0)
-                                    }
-                                    (false, true) => {
-                                        // ((1 - Vj).Vk) = Vk - Vj.Vk
-                                        (-1.0, 0.0, 1.0)
-                                    }
-                                    (false, false) => {
-                                        // (1 - Vj).(1 - Vk) = 1 - Vj - Vk + Vj.Vk
-                                        (1.0, -1.0, -1.0)
-                                    }
-                                };
-                            constraints
-                                .delta_at(var_1_index, var_1_index, delta_var_1)
-                                .unwrap();
-                            constraints
-                                .delta_at(var_2_index, var_2_index, delta_var_2)
-                                .unwrap();
-                            constraints
-                                .delta_at(var_1_index, var_2_index, delta_product_2)
-                                .unwrap();
-                        }
-
-                        // Encode term `-Ci.Lj`
-                        eprintln!("product3 {}, {}", var_1_index, conj_index);
-                        let (delta_prod_3, additional_delta_conj_var) = if literal_1.positive {
-                            (-1.0, 0.0)
-                        } else {
-                            (1.0, -1.0)
-                        };
-                        constraints
-                            .delta_at(var_1_index, conj_index, delta_prod_3)
-                            .unwrap();
-
-                        delta_conj_var += additional_delta_conj_var;
+                    // Encode Li
+                    for i in 0..indexed.len() {
+                        self_constraint(&mut collector, &indexed, i, 1.0);
                     }
 
-                    // Encode term `2.Ci`
-                    eprintln!("C[{}]", conj_offset);
-                    constraints
-                        .delta_at(conj_index, conj_index, delta_conj_var)
-                        .unwrap();
+                    // Encode -Li.Lj
+                    for i in 0..indexed.len() {
+                        for j in i + 1..indexed.len() {
+                            cross_constraint(&mut collector, &indexed, i, j, -1.0);
+                        }
+                    }
+
+                    // Introduce variable C.
+                    //
+                    // Let's not do it before encoding Li or -Li.Lj otherwise we'll also add additional constraints.
+                    let c_index = collector.add_variable();
+                    let c_name: Arc<str> = format!("w_{}", c_index).into();
+                    let c_literal = Literal {
+                        positive: true,
+                        variable: Variable(c_name.clone()),
+                    };
+                    let c_local_index = indexed.len();
+                    indexed.push((c_literal, c_index));
+                    assert_eq!(indexed.len(), 4);
+                    eprintln!("Created new variable {c_name} with local index {c_local_index}, global index {c_index}");
+
+                    // Encode + C.Li
+                    names.push(c_name);
+                    for i in 0..indexed.len() {
+                        cross_constraint(&mut collector, &indexed, i, c_local_index, 1.0);
+                    }
+
+                    // Encode -2.C
+                    self_constraint(&mut collector, &indexed, c_local_index, -2.0);
                 }
                 _ => {
                     return Err(anyhow!(
@@ -268,7 +279,7 @@ impl Input {
                 }
             }
         }
-        Ok(constraints)
+        Ok(collector.collect(names))
     }
 }
 

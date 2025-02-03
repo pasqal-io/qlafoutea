@@ -1,0 +1,7 @@
+type: max3sat
+and:
+  - or:
+    - a
+  - or:
+    - NOT a
+    - b
