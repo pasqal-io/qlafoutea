@@ -30,6 +30,11 @@ struct Build {
     #[arg(long, default_value_t = 4_000)]
     max_iters: u64,
 
+    /// An upper bound to the number of iterations in each attempt we make to find an optimal
+    /// register.
+    #[arg(long, default_value_t = 100)]
+    max_attempts: u64,
+
     /// While laying out qubo, we make it costly to place atoms too close to the physical limits
     /// of the device. This value determines how much we worry when atoms are laid out in the
     /// unacceptable zone.
@@ -101,18 +106,17 @@ fn build(args: Build) -> Result<(), anyhow::Error> {
     // Step: compile the qubo to a register.
     eprintln!("...compiling {} constraints", constraints.num_constraints());
     eprintln!("{}", constraints);
-    let (register, quality, seed) = constraints
-        .layout(
-            &device,
-            &qubo::Options {
-                seed: args.seed,
-                min_quality: Quality::new(args.min_quality),
-                max_iters: args.max_iters,
-                overflow_protection_factor: args.overflow_protection_factor,
-                overflow_protection_threshold: args.overflow_protection_threshold,
-            },
-        )
-        .expect("Failed to compile qubo");
+    let (register, quality, seed) = constraints.layout(
+        &device,
+        &qubo::Options {
+            seed: args.seed,
+            min_quality: Quality::new(args.min_quality),
+            max_iters: args.max_iters,
+            max_attempts: args.max_attempts,
+            overflow_protection_factor: args.overflow_protection_factor,
+            overflow_protection_threshold: args.overflow_protection_threshold,
+        },
+    );
     eprintln!(
         "...compiled to {} qubits with a quality of {} (using seed {})",
         register.len(),
